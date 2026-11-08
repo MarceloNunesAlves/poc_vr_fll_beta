@@ -295,7 +295,7 @@ export function createWizardClassroom(scene) {
 
   // Quadro / Mural de profundidade com a foto de referência da sala de aula de Hogwarts
   const texLoader = new THREE.TextureLoader();
-  texLoader.load('/assets/classroom_ref.jpg', (refTex) => {
+  texLoader.load('/assets/quadro.jpeg', (refTex) => {
     refTex.colorSpace = THREE.SRGBColorSpace;
     const muralMat = new THREE.MeshBasicMaterial({
       map: refTex,

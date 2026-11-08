@@ -891,6 +891,11 @@ xrControllers.forEach((ctrl) => {
   });
 });
 
+// Garante que o Web Audio API esteja ativo e decodificado assim que entrar na sessão VR
+renderer.xr.addEventListener('sessionstart', () => {
+  audio.init();
+});
+
 // Botão para Entrar/Sair do Modo VR Imersivo no Meta Quest 3
 btnEnterVr.addEventListener('click', async () => {
   audio.init();
