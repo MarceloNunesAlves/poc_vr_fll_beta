@@ -406,6 +406,14 @@ function setHUDDialogue(speaker, text) {
   }
 }
 
+// Exibe o balão de fala da Letícia ou do Luigi e o esconde automaticamente assim que o áudio terminar
+function speakCharacterDialogue(speaker, text, audioKey) {
+  setHUDDialogue(speaker, text);
+  audio.speak(speaker, text, audioKey, () => {
+    setHUDDialogue('', '');
+  });
+}
+
 function transitionToState(newState) {
   currentState = newState;
   stateTimer = 0;
@@ -503,8 +511,7 @@ function transitionToState(newState) {
       classroom.setRoomBrightness(1.0);
       const msg =
         'Olá! Bem-vindo à nossa Escola de Magia! Venha andando até aqui no final da sala para escolher sua varinha!';
-      setHUDDialogue('Letícia', msg);
-      audio.speak('Letícia', msg, 'leticia_1');
+      speakCharacterDialogue('Letícia', msg, 'leticia_1');
       break;
     }
 
@@ -512,8 +519,7 @@ function transitionToState(newState) {
       phaseLabelEl.textContent = '5/7 • Escolha uma Varinha na mesa ao lado da Letícia';
       const msg =
         'Que demais que você veio! Escolha uma varinha mágica na mesa ao meu lado! Basta encostar sua mão nela ou apertar o botão A!';
-      setHUDDialogue('Letícia', msg);
-      audio.speak('Letícia', msg, 'leticia_2');
+      speakCharacterDialogue('Letícia', msg, 'leticia_2');
       break;
     }
 
@@ -521,8 +527,7 @@ function transitionToState(newState) {
       phaseLabelEl.textContent = '6/7 • Volte ao início da sala (Mesa da Professora com o Luigi)';
       const msg =
         'A varinha escolheu você! Agora volte até o início da sala, perto da mesa da professora, onde o Luigi vai te ajudar a fazer a magia!';
-      setHUDDialogue('Letícia', msg);
-      audio.speak('Letícia', msg, 'leticia_3');
+      speakCharacterDialogue('Letícia', msg, 'leticia_3');
       break;
     }
 
@@ -532,8 +537,7 @@ function transitionToState(newState) {
       magicParticles.visible = true;
       const msg =
         'Oi! Olhe a grande pena branca na mesa da professora! Aponte sua varinha e levante a mão ou segure o botão A dizendo: Wingardium Leviosa!';
-      setHUDDialogue('Luigi', msg);
-      audio.speak('Luigi', msg, 'luigi_1');
+      speakCharacterDialogue('Luigi', msg, 'luigi_1');
       break;
     }
 
@@ -545,8 +549,7 @@ function transitionToState(newState) {
 
       const msg =
         'Wingardium Leviosa! Uau, você conseguiu levantar a pena! Parabéns! Muito obrigado por vir no nosso aniversário!';
-      setHUDDialogue('Luigi', msg);
-      audio.speak('Luigi', msg, 'luigi_2');
+      speakCharacterDialogue('Luigi', msg, 'luigi_2');
       break;
     }
   }

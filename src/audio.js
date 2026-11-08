@@ -9,6 +9,9 @@ export class MagicAudioSystem {
     this.currentAudio = null;
     this.currentSourceNode = null;
     this.activeSpeechKey = null;
+    this.speechCounter = 0;
+    this.currentSpeechId = 0;
+    this.fallbackEndTimer = null;
     this.rawAudioCache = new Map();   // audioKey -> ArrayBuffer
     this.voiceBuffers = new Map();    // audioKey -> AudioBuffer decodificado
     this.loadingPromises = new Map(); // audioKey -> Promise<AudioBuffer | null>
@@ -174,7 +177,7 @@ export class MagicAudioSystem {
    * Reproduz um AudioBuffer diretamente no Web Audio API (funciona 100% no WebXR do Meta Quest 3,
    * mesmo quando disparado automaticamente pela caminhada ou transição de fases!)
    */
-  playDecodedVoiceBuffer(audioBuffer, character) {
+  playDecodedVoiceBuffer(audioBuffer, character, speechId, onEnded = null) {
     this.init();
     if (!this.ctx || !audioBuffer) return false;
 
@@ -186,7 +189,8 @@ export class MagicAudioSystem {
       const source = this.ctx.createBufferSource();
       source.buffer = audioBuffer;
       // Leve ajuste de tom para deixar as vozes ainda mais animadas
-      source.playbackRate.value = character === 'Letícia' ? 1.06 : 1.02;
+      const rate = character === 'Letícia' ? 1.06 : 1.02;
+      source.playbackRate.value = rate;
 
       const gain = this.ctx.createGain();
       gain.gain.value = 1.4; // Destaca a voz de forma nítida sobre o som ambiente mágico
@@ -194,12 +198,26 @@ export class MagicAudioSystem {
       source.connect(gain);
       gain.connect(this.ctx.destination);
 
-      this.currentSourceNode = source;
-      source.onended = () => {
+      const finishSpeech = () => {
+        if (this.currentSpeechId !== speechId) return;
+        if (this.fallbackEndTimer) {
+          clearTimeout(this.fallbackEndTimer);
+          this.fallbackEndTimer = null;
+        }
         if (this.currentSourceNode === source) {
           this.currentSourceNode = null;
         }
+        if (typeof onEnded === 'function') {
+          onEnded();
+        }
       };
+
+      this.currentSourceNode = source;
+      source.onended = finishSpeech;
+
+      // Timer de segurança baseado na duração exata do buffer caso o contexto de áudio esteja suspenso
+      const durationMs = Math.ceil((audioBuffer.duration / rate) * 1000) + 250;
+      this.fallbackEndTimer = setTimeout(finishSpeech, durationMs);
 
       source.start(0);
       return true;
@@ -214,40 +232,56 @@ export class MagicAudioSystem {
    * 1. Usa Web Audio API (AudioBufferSourceNode) com os áudios em /public/audio/<audioKey>.mp3 ou .wav
    *    (garante reprodução dentro do modo VR imersivo no Meta Quest 3, onde speechSynthesis não possui voz PT-BR)
    * 2. Fallback para síntese de voz (Web Speech API) caso necessário
+   * 3. Dispara `onEnded` assim que o áudio terminar para ocultar o balão de fala!
    */
-  speak(character, text, audioKey = null) {
+  speak(character, text, audioKey = null, onEnded = null) {
     this.stopSpeech();
     this.init();
+
+    const speechId = ++this.speechCounter;
+    this.currentSpeechId = speechId;
     this.activeSpeechKey = audioKey;
 
     if (audioKey) {
       const cachedBuffer = this.voiceBuffers.get(audioKey);
       if (cachedBuffer) {
-        if (this.playDecodedVoiceBuffer(cachedBuffer, character)) {
+        if (this.playDecodedVoiceBuffer(cachedBuffer, character, speechId, onEnded)) {
           return;
         }
       }
 
       // Se ainda estiver carregando/decodificando, aguarda e toca assim que estiver pronto
       this.loadAndDecodeVoice(audioKey).then((decoded) => {
-        if (this.activeSpeechKey !== audioKey) return;
-        if (decoded && this.playDecodedVoiceBuffer(decoded, character)) {
+        if (this.currentSpeechId !== speechId) return;
+        if (decoded && this.playDecodedVoiceBuffer(decoded, character, speechId, onEnded)) {
           return;
         }
         // Fallback final para HTMLAudio ou TTS
         const audio = new Audio(`/audio/${audioKey}.wav`);
         this.currentAudio = audio;
+        audio.onended = () => {
+          if (this.currentSpeechId === speechId && typeof onEnded === 'function') {
+            onEnded();
+          }
+        };
         audio.play().catch(() => {
-          this.speakTTS(character, text);
+          this.speakTTS(character, text, speechId, onEnded);
         });
       });
       return;
     }
 
-    this.speakTTS(character, text);
+    this.speakTTS(character, text, speechId, onEnded);
   }
 
-  speakTTS(character, text) {
+  speakTTS(character, text, speechId, onEnded = null) {
+    const estimatedMs = Math.max(3800, (text ? text.length : 40) * 70);
+    this.fallbackEndTimer = setTimeout(() => {
+      if (this.currentSpeechId === speechId && typeof onEnded === 'function') {
+        onEnded();
+      }
+    }, estimatedMs);
+
     if (!('speechSynthesis' in window)) return;
     try {
       window.speechSynthesis.cancel();
@@ -261,6 +295,16 @@ export class MagicAudioSystem {
       if (ptVoices.length > 0) {
         utter.voice = ptVoices[0];
       }
+      utter.onend = () => {
+        if (this.currentSpeechId !== speechId) return;
+        if (this.fallbackEndTimer) {
+          clearTimeout(this.fallbackEndTimer);
+          this.fallbackEndTimer = null;
+        }
+        if (typeof onEnded === 'function') {
+          onEnded();
+        }
+      };
       window.speechSynthesis.speak(utter);
     } catch {
       // Ignora caso o navegador bloqueie TTS sem interação
@@ -268,9 +312,15 @@ export class MagicAudioSystem {
   }
 
   stopSpeech() {
+    this.currentSpeechId = ++this.speechCounter;
     this.activeSpeechKey = null;
+    if (this.fallbackEndTimer) {
+      clearTimeout(this.fallbackEndTimer);
+      this.fallbackEndTimer = null;
+    }
     if (this.currentSourceNode) {
       try {
+        this.currentSourceNode.onended = null;
         this.currentSourceNode.stop();
         this.currentSourceNode.disconnect();
       } catch {
@@ -279,6 +329,7 @@ export class MagicAudioSystem {
       this.currentSourceNode = null;
     }
     if (this.currentAudio) {
+      this.currentAudio.onended = null;
       this.currentAudio.pause();
       this.currentAudio = null;
     }
