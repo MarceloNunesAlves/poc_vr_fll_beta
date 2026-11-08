@@ -125,7 +125,7 @@ export function createWandMesh(woodColor = 0x5c3317, glowColor = 0xffd700) {
   const wand = new THREE.Group();
 
   // Cabo entalhado
-  const handleGeo = new THREE.CylinderGeometry(0.012, 0.016, 0.11, 12);
+  const handleGeo = new THREE.CylinderGeometry(0.014, 0.018, 0.12, 14);
   handleGeo.rotateX(Math.PI / 2);
   const handleMat = new THREE.MeshStandardMaterial({
     color: woodColor,
@@ -136,27 +136,70 @@ export function createWandMesh(woodColor = 0x5c3317, glowColor = 0xffd700) {
   handle.position.z = 0.05;
   wand.add(handle);
 
+  // Anel dourado decorativo entre o cabo e a haste
+  const ringGeo = new THREE.TorusGeometry(0.0145, 0.003, 8, 16);
+  const ringMat = new THREE.MeshStandardMaterial({
+    color: 0xf5d061,
+    roughness: 0.3,
+    metalness: 0.7,
+    emissive: 0xf5d061,
+    emissiveIntensity: 0.2
+  });
+  const guardRing = new THREE.Mesh(ringGeo, ringMat);
+  guardRing.position.z = -0.01;
+  wand.add(guardRing);
+
   // Haste afilada da varinha
-  const tipGeo = new THREE.CylinderGeometry(0.004, 0.011, 0.26, 12);
+  const tipGeo = new THREE.CylinderGeometry(0.0045, 0.012, 0.27, 14);
   tipGeo.rotateX(Math.PI / 2);
   const tipMat = new THREE.MeshStandardMaterial({
     color: woodColor,
     roughness: 0.35
   });
   const shaft = new THREE.Mesh(tipGeo, tipMat);
-  shaft.position.z = -0.13;
+  shaft.position.z = -0.135;
   wand.add(shaft);
 
   // Esfera luminosa na ponta da varinha
-  const orbGeo = new THREE.SphereGeometry(0.012, 16, 16);
+  const orbGeo = new THREE.SphereGeometry(0.013, 16, 16);
   const orbMat = new THREE.MeshBasicMaterial({
     color: glowColor
   });
   const orb = new THREE.Mesh(orbGeo, orbMat);
-  orb.position.z = -0.265;
+  orb.position.z = -0.275;
   wand.add(orb);
 
-  wand.userData = { woodColor, glowColor, orb };
+  // Halo mágico suave ao redor da ponta
+  const haloGeo = new THREE.SphereGeometry(0.024, 16, 16);
+  const haloMat = new THREE.MeshBasicMaterial({
+    color: glowColor,
+    transparent: true,
+    opacity: 0.35
+  });
+  const orbHalo = new THREE.Mesh(haloGeo, haloMat);
+  orb.add(orbHalo);
+
+  const setColors = (newWood, newGlow) => {
+    wand.userData.woodColor = newWood;
+    wand.userData.glowColor = newGlow;
+    handleMat.color.setHex(newWood);
+    tipMat.color.setHex(newWood);
+    orbMat.color.setHex(newGlow);
+    haloMat.color.setHex(newGlow);
+  };
+
+  wand.userData = {
+    woodColor,
+    glowColor,
+    orb,
+    orbHalo,
+    handleMat,
+    tipMat,
+    orbMat,
+    haloMat,
+    setColors,
+    isHovered: false
+  };
   return wand;
 }
 
@@ -411,17 +454,18 @@ export function createWizardClassroom(scene) {
   // 3 Varinhas Mágicas selecionáveis sobre a mesa
   const wandsOnTable = [];
   const wandConfigs = [
-    { wood: 0x5c3317, glow: 0xffd700, offsetX: -0.16, name: 'Varinha de Fênix Dourada' },
+    { wood: 0x5c3317, glow: 0xffd700, offsetX: -0.18, name: 'Varinha de Fênix Dourada' },
     { wood: 0x2b1b12, glow: 0x60a5fa, offsetX: 0.0, name: 'Varinha Estelar Azul' },
-    { wood: 0x8b4513, glow: 0xf472b6, offsetX: 0.16, name: 'Varinha Encantada Rubi' }
+    { wood: 0x8b4513, glow: 0xf472b6, offsetX: 0.18, name: 'Varinha Encantada Rubi' }
   ];
 
   wandConfigs.forEach((cfg, idx) => {
     const wMesh = createWandMesh(cfg.wood, cfg.glow);
+    // Centraliza o comprimento da varinha sobre a almofada da mesa
     wMesh.position.set(
       wandTable.position.x + cfg.offsetX,
       0.93,
-      wandTable.position.z
+      wandTable.position.z - 0.08
     );
     wMesh.rotation.y = Math.PI;
     wMesh.userData.config = cfg;
@@ -519,10 +563,22 @@ export function createWizardClassroom(scene) {
         c.position.y = c.userData.baseY + Math.sin(elapsed * 1.8 + c.userData.phase) * 0.05;
       });
 
-      // Anima varinhas disponíveis na mesa
+      // Anima varinhas disponíveis na mesa (destaca a varinha apontada pelo controle)
       wandsOnTable.forEach((w, idx) => {
         if (w.visible) {
-          w.position.y = 0.94 + Math.sin(elapsed * 2.8 + idx) * 0.025;
+          const hovered = Boolean(w.userData.isHovered);
+          const targetBaseY = hovered ? 0.99 : 0.935;
+          const bob = Math.sin(elapsed * (hovered ? 4.5 : 2.8) + idx) * (hovered ? 0.018 : 0.02);
+          w.position.y = THREE.MathUtils.lerp(w.position.y, targetBaseY + bob, 0.25);
+
+          const targetScale = hovered ? 1.18 : 1.0;
+          const nextScale = THREE.MathUtils.lerp(w.scale.x, targetScale, 0.25);
+          w.scale.setScalar(nextScale);
+
+          if (w.userData.orbHalo) {
+            w.userData.orbHalo.scale.setScalar(hovered ? 1.65 : 1.0);
+            w.userData.haloMat.opacity = hovered ? 0.75 : 0.35;
+          }
         }
       });
 
