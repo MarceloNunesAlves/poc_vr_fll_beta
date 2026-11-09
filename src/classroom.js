@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { FLOOR_QR_CORNERS, QR_PHYSICAL_SIZE_METERS, generateCornerQrCanvas } from './qrFloorAnchors.js';
 
 /**
  * Gera texturas procedurais de pedra de castelo e madeira antiga em Canvas
@@ -261,6 +262,43 @@ export function createWizardClassroom(scene) {
   const backBorder = new THREE.Mesh(new THREE.PlaneGeometry(walkableWidth, 0.04).rotateX(-Math.PI / 2), borderMat);
   backBorder.position.set(0, 0.008, -walkableLength / 2 + 0.03);
   carpetGroup.add(leftBorder, rightBorder, frontBorder, backBorder);
+
+  // Selos discretos nos 4 cantos do tapete (20cm x 20cm) correspondentes aos 4 QR Codes físicos de chão
+  const qrCornerMeshes = [];
+  FLOOR_QR_CORNERS.forEach((corner) => {
+    const cornerGroup = new THREE.Group();
+    cornerGroup.position.set(corner.roomX, 0.009, corner.roomZ);
+
+    const qrTex = new THREE.CanvasTexture(generateCornerQrCanvas(corner.index, 256));
+    qrTex.colorSpace = THREE.SRGBColorSpace;
+
+    const sealPlane = new THREE.Mesh(
+      new THREE.PlaneGeometry(QR_PHYSICAL_SIZE_METERS, QR_PHYSICAL_SIZE_METERS).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({
+        map: qrTex,
+        color: 0xd4af37,
+        transparent: true,
+        opacity: 0.22
+      })
+    );
+
+    const glowRing = new THREE.Mesh(
+      new THREE.RingGeometry(QR_PHYSICAL_SIZE_METERS * 0.52, QR_PHYSICAL_SIZE_METERS * 0.62, 24).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({
+        color: 0xf5d061,
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0.25
+      })
+    );
+    glowRing.position.y = 0.001;
+
+    cornerGroup.add(sealPlane, glowRing);
+    cornerGroup.userData = { sealPlane, glowRing, detected: false };
+    carpetGroup.add(cornerGroup);
+    qrCornerMeshes.push(cornerGroup);
+  });
+
   roomGroup.add(carpetGroup);
 
   // 3. Paredes de pedra gótica e teto abobadado
@@ -556,7 +594,18 @@ export function createWizardClassroom(scene) {
     featherMat: vaneMat,
     pathMarkers,
     candles,
+    qrCornerMeshes,
     setRoomBrightness,
+    setQrCornerStates(detectedFlags = [false, false, false, false]) {
+      qrCornerMeshes.forEach((cg, idx) => {
+        const isDetected = Boolean(detectedFlags[idx]);
+        cg.userData.detected = isDetected;
+        cg.userData.sealPlane.material.color.setHex(isDetected ? 0xa7f3d0 : 0xd4af37);
+        cg.userData.sealPlane.material.opacity = isDetected ? 0.65 : 0.22;
+        cg.userData.glowRing.material.color.setHex(isDetected ? 0x4ade80 : 0xf5d061);
+        cg.userData.glowRing.material.opacity = isDetected ? 0.85 : 0.25;
+      });
+    },
     update(elapsed, activePathDirection = 0) {
       // Anima velas flutuantes
       candles.forEach((c) => {

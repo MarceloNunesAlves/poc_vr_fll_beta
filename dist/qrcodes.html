@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Imprimir 4 QR Codes de Chão (4,0m × 1,5m) — Escola de Magia</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Georgia', 'Times New Roman', serif;
+      background: #120e1a;
+      color: #f8f1df;
+      padding: 24px;
+    }
+
+    .no-print-header {
+      max-width: 920px;
+      margin: 0 auto 28px auto;
+      background: rgba(26, 18, 38, 0.95);
+      border: 2px solid #f5d061;
+      border-radius: 16px;
+      padding: 24px 28px;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+    }
+
+    .no-print-header h1 {
+      color: #ffe885;
+      font-size: 1.6rem;
+      margin-bottom: 10px;
+    }
+
+    .no-print-header p {
+      color: #e5dac3;
+      line-height: 1.5;
+      margin-bottom: 12px;
+      font-size: 0.98rem;
+    }
+
+    .floor-diagram {
+      margin: 18px 0;
+      padding: 18px;
+      border: 2px dashed rgba(245, 208, 97, 0.6);
+      border-radius: 12px;
+      background: rgba(88, 12, 18, 0.35);
+      text-align: center;
+    }
+
+    .floor-diagram-grid {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      grid-template-rows: auto 90px auto;
+      gap: 10px;
+      max-width: 520px;
+      margin: 12px auto 0 auto;
+      padding: 14px;
+      border: 2px solid #f5d061;
+      border-radius: 8px;
+      background: rgba(40, 8, 12, 0.75);
+      font-family: Arial, sans-serif;
+      font-size: 0.85rem;
+    }
+
+    .corner-box {
+      background: #ffffff;
+      color: #000000;
+      padding: 8px 10px;
+      border-radius: 6px;
+      font-weight: bold;
+      border: 2px solid #000;
+    }
+
+    .center-corridor {
+      grid-column: 1 / 4;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: #ffe885;
+      font-weight: bold;
+      letter-spacing: 0.5px;
+    }
+
+    .actions-bar {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-top: 16px;
+    }
+
+    .btn {
+      cursor: pointer;
+      padding: 12px 22px;
+      border-radius: 10px;
+      border: 2px solid #f5d061;
+      background: linear-gradient(135deg, #8b0000 0%, #4a0000 100%);
+      color: #ffe885;
+      font-family: inherit;
+      font-size: 1rem;
+      font-weight: bold;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .btn.secondary {
+      background: rgba(255, 255, 255, 0.1);
+      color: #f8f1df;
+    }
+
+    /* Cartões de página A4 (1 QR Code grande de 20cm x 20cm por folha) */
+    .sheets-container {
+      display: flex;
+      flex-direction: column;
+      gap: 28px;
+      align-items: center;
+    }
+
+    .qr-sheet {
+      background: #ffffff;
+      color: #000000;
+      width: 210mm;
+      min-height: 285mm;
+      padding: 12mm;
+      border-radius: 12px;
+      box-shadow: 0 10px 35px rgba(0, 0, 0, 0.65);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: space-between;
+      text-align: center;
+      page-break-after: always;
+      break-after: page;
+    }
+
+    .qr-sheet:last-child {
+      page-break-after: auto;
+      break-after: auto;
+    }
+
+    .sheet-header {
+      border-bottom: 3px solid #000;
+      padding-bottom: 4mm;
+      width: 100%;
+    }
+
+    .sheet-header h2 {
+      font-family: Arial, Helvetica, sans-serif;
+      font-size: 18pt;
+      font-weight: 900;
+      letter-spacing: 0.5px;
+      margin-bottom: 2mm;
+    }
+
+    .sheet-header p {
+      font-family: Arial, Helvetica, sans-serif;
+      font-size: 11.5pt;
+      font-weight: bold;
+      color: #222;
+    }
+
+    .orientation-banner {
+      margin: 3mm 0;
+      padding: 3mm 8mm;
+      background: #000000;
+      color: #ffffff;
+      font-family: Arial, Helvetica, sans-serif;
+      font-size: 13pt;
+      font-weight: 900;
+      border-radius: 6px;
+      letter-spacing: 1px;
+    }
+
+    /* Tamanho físico exato de 20cm x 20cm (200mm x 200mm) na impressão A4 */
+    .qr-canvas-wrapper {
+      width: 200mm;
+      height: 200mm;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .qr-canvas-wrapper canvas {
+      width: 200mm;
+      height: 200mm;
+      display: block;
+    }
+
+    .sheet-footer {
+      border-top: 2px solid #000;
+      padding-top: 3mm;
+      width: 100%;
+      font-family: Arial, Helvetica, sans-serif;
+      font-size: 10pt;
+      color: #111;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    @media print {
+      @page {
+        size: A4 portrait;
+        margin: 0;
+      }
+
+      body {
+        background: #ffffff;
+        color: #000000;
+        padding: 0;
+      }
+
+      .no-print-header {
+        display: none !important;
+      }
+
+      .sheets-container {
+        gap: 0;
+      }
+
+      .qr-sheet {
+        width: 210mm;
+        height: 297mm;
+        min-height: 297mm;
+        padding: 10mm 5mm;
+        border-radius: 0;
+        box-shadow: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="no-print-header">
+    <h1>🖨️ Kit de 4 QR Codes de Chão — Cantos da Sala (4,0m × 1,5m)</h1>
+    <p>
+      Imprima estas <strong>4 folhas A4</strong> (escala <strong>100% / Tamanho Real</strong> na impressora) e cole-as no chão nos
+      <strong>4 cantos do retângulo físico de 4,0m × 1,5m</strong>. Cada QR Code tem exatamente <strong>20cm × 20cm</strong>.
+    </p>
+    <p>
+      <strong>Importante:</strong> Todas as 4 folhas devem ficar com a seta <strong>"⬆️ APONTAR PARA O FUNDO DA SALA (LETÍCIA)"</strong>
+      virada para o final do corredor de 4 metros (para onde a pessoa olha quando está sentada na cadeira).
+      Se os QR Codes não estiverem no chão, o jogo continua funcionando normalmente como antes!
+    </p>
+
+    <div class="floor-diagram">
+      <div style="color: #ffe885; font-weight: bold; margin-bottom: 6px;">
+        🗺️ MAPA DE POSICIONAMENTO NO CHÃO FÍSICO (4,0m × 1,5m)
+      </div>
+      <div style="font-size: 0.85rem; color: #d8ceb8;">
+        ⬆️ FUNDO DA SALA (Onde ficam a Letícia e a Mesa de Varinhas | Z = -2,00m)
+      </div>
+      <div class="floor-diagram-grid">
+        <div class="corner-box">
+          ⬆️ QR 3<br />Fundo Esquerda<br />(-0,75m, -2,00m)
+        </div>
+        <div style="color: #ffe885; align-self: center; font-weight: bold;">⬅ 1,5m de Largura ➡</div>
+        <div class="corner-box">
+          ⬆️ QR 4<br />Fundo Direita<br />(+0,75m, -2,00m)
+        </div>
+
+        <div class="center-corridor">
+          <div>⬆️ Corredor Físico Livre de 4,0m de Comprimento ⬆️</div>
+          <div style="font-size: 0.78rem; color: #dfd6c3; margin-top: 4px;">
+            (Cadeira Física fica no Início da Sala olhando para o Fundo)
+          </div>
+        </div>
+
+        <div class="corner-box">
+          ⬆️ QR 1<br />Início Esquerda<br />(-0,75m, +2,00m)
+        </div>
+        <div style="color: #ffe885; align-self: center; font-weight: bold;">🪑 CADEIRA AQUI</div>
+        <div class="corner-box">
+          ⬆️ QR 2<br />Início Direita<br />(+0,75m, +2,00m)
+        </div>
+      </div>
+      <div style="font-size: 0.85rem; color: #d8ceb8; margin-top: 8px;">
+        ⬇️ INÍCIO DA SALA (Onde ficam a Cadeira Física, a Mesa da Professora e o Luigi | Z = +2,00m)
+      </div>
+    </div>
+
+    <div class="actions-bar">
+      <button class="btn" onclick="window.print()">
+        🖨️ Imprimir as 4 Folhas A4 Agora
+      </button>
+      <a class="btn secondary" href="/">
+        ⬅ Voltar para a Experiência VR
+      </a>
+    </div>
+  </div>
+
+  <div id="sheets-root" class="sheets-container"></div>
+
+  <script>
+    const FLOOR_QR_CORNERS = [
+      {
+        index: 0,
+        id: 'QR-CANTO-1',
+        title: 'CANTO 1 — INÍCIO ESQUERDA (Lado da Cadeira)',
+        placeHint: 'Chão: Atrás/Esquerda da Cadeira (X: -0,75m | Z: +2,00m)',
+        seed: 104729
+      },
+      {
+        index: 1,
+        id: 'QR-CANTO-2',
+        title: 'CANTO 2 — INÍCIO DIREITA (Lado da Cadeira)',
+        placeHint: 'Chão: Atrás/Direita da Cadeira (X: +0,75m | Z: +2,00m)',
+        seed: 224737
+      },
+      {
+        index: 2,
+        id: 'QR-CANTO-3',
+        title: 'CANTO 3 — FUNDO ESQUERDA (Mesa de Varinhas)',
+        placeHint: 'Chão: Fundo Esquerdo perto das Varinhas (X: -0,75m | Z: -2,00m)',
+        seed: 350377
+      },
+      {
+        index: 3,
+        id: 'QR-CANTO-4',
+        title: 'CANTO 4 — FUNDO DIREITA (Perto da Letícia)',
+        placeHint: 'Chão: Fundo Direito perto da Letícia (X: +0,75m | Z: -2,00m)',
+        seed: 479909
+      }
+    ];
+
+    function createSeededRandom(seed) {
+      let t = seed >>> 0;
+      return function next() {
+        t += 0x6d2b79f5;
+        let r = Math.imul(t ^ (t >>> 15), 1 | t);
+        r ^= r + Math.imul(r ^ (r >>> 7), 61 | r);
+        return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+
+    function drawFinderPattern(ctx, modX, modY, moduleSize) {
+      ctx.fillStyle = '#000000';
+      ctx.fillRect(modX * moduleSize, modY * moduleSize, 7 * moduleSize, 7 * moduleSize);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect((modX + 1) * moduleSize, (modY + 1) * moduleSize, 5 * moduleSize, 5 * moduleSize);
+      ctx.fillStyle = '#000000';
+      ctx.fillRect((modX + 2) * moduleSize, (modY + 2) * moduleSize, 3 * moduleSize, 3 * moduleSize);
+    }
+
+    function generateCornerQrCanvas(cornerIndex, sizePx = 1200) {
+      const corner = FLOOR_QR_CORNERS[cornerIndex] || FLOOR_QR_CORNERS[0];
+      const canvas = document.createElement('canvas');
+      canvas.width = sizePx;
+      canvas.height = sizePx;
+      const ctx = canvas.getContext('2d');
+
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, sizePx, sizePx);
+
+      const gridCells = 29;
+      const margin = Math.round(sizePx * 0.06);
+      const innerSize = sizePx - margin * 2;
+      const mod = innerSize / gridCells;
+
+      ctx.strokeStyle = '#000000';
+      ctx.lineWidth = Math.max(4, Math.round(sizePx * 0.008));
+      ctx.strokeRect(margin * 0.35, margin * 0.35, sizePx - margin * 0.7, sizePx - margin * 0.7);
+
+      ctx.save();
+      ctx.translate(margin, margin);
+
+      const rand = createSeededRandom(corner.seed);
+      const reserved = Array.from({ length: gridCells }, () => Array(gridCells).fill(false));
+
+      const markReserved = (x0, y0, w, h) => {
+        for (let y = Math.max(0, y0); y < Math.min(gridCells, y0 + h); y++) {
+          for (let x = Math.max(0, x0); x < Math.min(gridCells, x0 + w); x++) {
+            reserved[y][x] = true;
+          }
+        }
+      };
+
+      markReserved(0, 0, 8, 8);
+      markReserved(gridCells - 8, 0, 8, 8);
+      markReserved(0, gridCells - 8, 8, 8);
+      markReserved(gridCells - 8, gridCells - 8, 8, 8);
+      markReserved(10, 10, 9, 9);
+
+      ctx.fillStyle = '#000000';
+      for (let y = 0; y < gridCells; y++) {
+        for (let x = 0; x < gridCells; x++) {
+          if ((y === 6 || x === 6) && !reserved[y][x]) {
+            if ((x + y) % 2 === 0) {
+              ctx.fillRect(x * mod, y * mod, Math.ceil(mod), Math.ceil(mod));
+            }
+            reserved[y][x] = true;
+            continue;
+          }
+          if (reserved[y][x]) continue;
+          if (rand() > 0.47) {
+            ctx.fillRect(x * mod, y * mod, Math.ceil(mod), Math.ceil(mod));
+            if (rand() > 0.72) {
+              ctx.fillStyle = '#ffffff';
+              ctx.fillRect((x + 0.3) * mod, (y + 0.3) * mod, mod * 0.4, mod * 0.4);
+              ctx.fillStyle = '#000000';
+            }
+          }
+        }
+      }
+
+      drawFinderPattern(ctx, 0, 0, mod);
+      drawFinderPattern(ctx, gridCells - 7, 0, mod);
+      drawFinderPattern(ctx, 0, gridCells - 7, mod);
+
+      const brX = (gridCells - 7) * mod;
+      const brY = (gridCells - 7) * mod;
+      ctx.fillStyle = '#000000';
+      ctx.beginPath();
+      ctx.arc(brX + 3.5 * mod, brY + 3.5 * mod, 3.4 * mod, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(brX + 3.5 * mod, brY + 3.5 * mod, 2.1 * mod, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#000000';
+      const startAngle = (cornerIndex * Math.PI) / 2;
+      ctx.beginPath();
+      ctx.moveTo(brX + 3.5 * mod, brY + 3.5 * mod);
+      ctx.arc(brX + 3.5 * mod, brY + 3.5 * mod, 2.1 * mod, startAngle, startAngle + Math.PI * 0.85);
+      ctx.closePath();
+      ctx.fill();
+
+      const cX = 10 * mod;
+      const cY = 10 * mod;
+      const cSize = 9 * mod;
+
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(cX, cY, cSize, cSize);
+      ctx.strokeStyle = '#000000';
+      ctx.lineWidth = Math.max(4, mod * 0.55);
+      ctx.strokeRect(cX + mod * 0.3, cY + mod * 0.3, cSize - mod * 0.6, cSize - mod * 0.6);
+
+      ctx.fillStyle = '#000000';
+      ctx.beginPath();
+      ctx.moveTo(cX + cSize * 0.5, cY + mod * 0.9);
+      ctx.lineTo(cX + cSize * 0.82, cY + mod * 3.3);
+      ctx.lineTo(cX + cSize * 0.18, cY + mod * 3.3);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.fillStyle = '#000000';
+      ctx.font = `900 ${Math.round(mod * 4.4)}px Arial, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(String(cornerIndex + 1), cX + cSize * 0.5, cY + mod * 6.2);
+
+      ctx.restore();
+      return canvas;
+    }
+
+    const root = document.getElementById('sheets-root');
+
+    FLOOR_QR_CORNERS.forEach((corner) => {
+      const sheet = document.createElement('div');
+      sheet.className = 'qr-sheet';
+
+      sheet.innerHTML = `
+        <div class="sheet-header">
+          <h2>${corner.title}</h2>
+          <p>${corner.placeHint}</p>
+        </div>
+        <div class="orientation-banner">
+          ⬆️ APONTAR ESTA SETA PARA O FUNDO DA SALA (DIREÇÃO DA LETÍCIA) ⬆️
+        </div>
+        <div class="qr-canvas-wrapper" id="qr-wrap-${corner.index}"></div>
+        <div class="sheet-footer">
+          <span><strong>Escola de Magia VR</strong> • Sala 4,0m × 1,5m</span>
+          <span>Tamanho Real do Marcador: <strong>20,0 cm × 20,0 cm</strong> (Escala 100%)</span>
+          <span><strong>${corner.id}</strong></span>
+        </div>
+      `;
+
+      root.appendChild(sheet);
+      const canvas = generateCornerQrCanvas(corner.index, 1200);
+      document.getElementById(`qr-wrap-${corner.index}`).appendChild(canvas);
+    });
+  </script>
+</body>
+</html>

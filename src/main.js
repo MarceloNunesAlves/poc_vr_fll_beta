@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { createWizardClassroom, createWandMesh } from './classroom.js';
 import { createWizardCharacter } from './characters.js';
 import { MagicAudioSystem } from './audio.js';
+import { FloorQrAnchorSystem } from './qrFloorAnchors.js';
 
 // Estados da Experiência
 const STATE = {
@@ -17,9 +18,11 @@ const STATE = {
 };
 
 const audio = new MagicAudioSystem();
+const qrFloorAnchor = new FloorQrAnchorSystem();
 
 // Elementos do HUD 2D (para tela do Mac/operador)
 const phaseLabelEl = document.getElementById('phase-label');
+const qrStatusLabelEl = document.getElementById('qr-status-label');
 const welcomeModalEl = document.getElementById('welcome-modal');
 const modalTitleEl = document.getElementById('modal-title');
 const modalDescEl = document.getElementById('modal-desc');
@@ -446,10 +449,12 @@ function transitionToState(newState) {
       classroom.featherGroup.position.copy(classroom.featherRestPos);
       classroom.featherGroup.rotation.set(0, 0, 0);
 
-      // Jogador de volta na cadeira no início da sala
-      playerRig.position.set(0, 0, 1.45);
-      playerRig.rotation.set(0, 0, 0);
-      camera.rotation.set(0, 0, 0);
+      // Jogador de volta na cadeira no início da sala (ou mantém alinhado aos 4 QR Codes físicos se ativos)
+      if (!qrFloorAnchor.applyAnchorToRig(playerRig, false)) {
+        playerRig.position.set(0, 0, 1.45);
+        playerRig.rotation.set(0, 0, 0);
+        camera.rotation.set(0, 0, 0);
+      }
 
       classroom.roomGroup.visible = true;
       classroom.setRoomBrightness(0.35);
@@ -501,8 +506,10 @@ function transitionToState(newState) {
       classroom.setRoomBrightness(0.0);
       vrBannerMesh.visible = false;
 
-      // Posiciona o jogador sentado na cadeira no início da sala
-      playerRig.position.set(0, 0, 1.45);
+      // Posiciona o jogador sentado na cadeira no início da sala (ou mantém a sala travada nos QR Codes do chão)
+      if (!qrFloorAnchor.applyAnchorToRig(playerRig, false)) {
+        playerRig.position.set(0, 0, 1.45);
+      }
       break;
     }
 
@@ -803,9 +810,21 @@ function getWandTipWorldPosition() {
   return tempVecB.clone();
 }
 
+function updateQrStatusBadge() {
+  if (!qrStatusLabelEl) return;
+  const count = qrFloorAnchor.getDetectedCount();
+  if (count === 0) {
+    qrStatusLabelEl.textContent = '📍 Chão: Modo Padrão (0/4 QR Codes)';
+  } else {
+    qrStatusLabelEl.textContent = `📍 Sala Travada no Chão (${count}/4 QR Codes)`;
+  }
+}
+
 function recenterChairPosition() {
-  playerRig.position.set(0, 0, 1.45);
-  playerRig.rotation.set(0, 0, 0);
+  if (!qrFloorAnchor.applyAnchorToRig(playerRig, false)) {
+    playerRig.position.set(0, 0, 1.45);
+    playerRig.rotation.set(0, 0, 0);
+  }
 }
 
 // ============================================================================
@@ -915,9 +934,24 @@ btnEnterVr.addEventListener('click', async () => {
       alert('Modo VR Imersivo não disponível neste dispositivo. Use o simulador na tela ou abra no Meta Quest 3!');
       return;
     }
-    const session = await navigator.xr.requestSession('immersive-vr', {
-      optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking']
-    });
+    const trackedImages = await qrFloorAnchor.prepareTrackedImages();
+    let session = null;
+    if (trackedImages.length > 0) {
+      try {
+        session = await navigator.xr.requestSession('immersive-vr', {
+          optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking', 'image-tracking'],
+          trackedImages
+        });
+      } catch {
+        // Fallback automático caso o navegador não suporte trackedImages
+        session = null;
+      }
+    }
+    if (!session) {
+      session = await navigator.xr.requestSession('immersive-vr', {
+        optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking']
+      });
+    }
     renderer.xr.setSession(session);
   } catch (err) {
     console.warn('Erro ao iniciar sessão WebXR:', err);
@@ -1070,9 +1104,19 @@ function updateMagicParticles(elapsed, centerPos, spread = 0.35, rise = 0.0) {
 // ============================================================================
 const clock = new THREE.Clock();
 
-renderer.setAnimationLoop(() => {
+renderer.setAnimationLoop((timestamp, frame) => {
   const dt = Math.min(clock.getDelta(), 0.1);
   const elapsed = clock.getElapsedTime();
+
+  // Se houver QR Codes nos 4 cantos do chão físico, alinha a sala automaticamente.
+  // Se não houver nenhum QR Code, não altera nada e mantém o comportamento padrão!
+  if (frame && renderer.xr.isPresenting) {
+    qrFloorAnchor.updateFromXRFrame(frame, renderer, playerRig, elapsed, () => {
+      classroom.setQrCornerStates(qrFloorAnchor.getDetectedCornerFlags());
+      updateQrStatusBadge();
+      triggerControllerHaptics(0.65, 110);
+    });
+  }
 
   const { holdingAction } = pollQuest3Gamepads(dt);
   updateDesktopMovement(dt);
