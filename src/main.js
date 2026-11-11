@@ -1,20 +1,23 @@
 import * as THREE from 'three';
 import { createWizardClassroom, createWandMesh } from './classroom.js';
+import { createTrainCabin } from './trainCabin.js';
 import { createWizardCharacter } from './characters.js';
 import { MagicAudioSystem } from './audio.js';
 import { FloorQrAnchorSystem } from './qrFloorAnchors.js';
 
 // Estados da Experiência
 const STATE = {
-  WELCOME: 'WELCOME',               // Tela de boas-vindas (Aperte A para iniciar)
-  VIDEO_360: 'VIDEO_360',           // Vídeo 360° sentado (Placeholder de 5s com texto)
-  DARK_TRANSITION: 'DARK_TRANSITION', // Filme finaliza e fica tudo escuro
-  ROOM_AWAKEN: 'ROOM_AWAKEN',       // Aos poucos vai iniciando na cadeira da sala de bruxos
-  GO_TO_LETICIA: 'GO_TO_LETICIA',   // Ir até o final da sala onde está a Letícia
-  SELECT_WAND: 'SELECT_WAND',       // Escolher uma varinha na mesa ao lado da Letícia
-  GO_TO_LUIGI: 'GO_TO_LUIGI',       // Voltar ao início da sala perto da mesa da professora e do Luigi
-  CAST_SPELL: 'CAST_SPELL',         // Fazer a magia "Wingardium Leviosa" e levantar a pena branca grande
-  CELEBRATION: 'CELEBRATION'        // Finalização e pronto para o próximo usuário apertando A
+  WELCOME: 'WELCOME',                               // Tela de boas-vindas sentado na Cabine de Trem (Aperte A para iniciar)
+  TRAIN_CABIN: 'TRAIN_CABIN',                       // Cabine de trem 3D com vídeo Visao_Trem.mp4 na janela à esquerda
+  TRAIN_DARK_TRANSITION: 'TRAIN_DARK_TRANSITION',   // Fim do vídeo do trem: escurece tudo e desaparece a cabine
+  DOOR_VIDEO: 'DOOR_VIDEO',                         // Tudo escuro e inicia o vídeo Porta.mp4 à frente do usuário
+  DOOR_DARK_TRANSITION: 'DOOR_DARK_TRANSITION',     // Fim do vídeo da porta: escurece tudo novamente
+  ROOM_AWAKEN: 'ROOM_AWAKEN',                       // Inicia o jogo: desperta na cadeira da sala de bruxos
+  GO_TO_LETICIA: 'GO_TO_LETICIA',                   // Ir até o final da sala onde está a Letícia
+  SELECT_WAND: 'SELECT_WAND',                       // Escolher uma varinha na mesa ao lado da Letícia
+  GO_TO_LUIGI: 'GO_TO_LUIGI',                       // Voltar ao início da sala perto da mesa da professora e do Luigi
+  CAST_SPELL: 'CAST_SPELL',                         // Fazer a magia "Wingardium Leviosa" e levantar a pena branca grande
+  CELEBRATION: 'CELEBRATION'                        // Finalização e pronto para o próximo usuário apertando A
 };
 
 const audio = new MagicAudioSystem();
@@ -29,6 +32,7 @@ const modalDescEl = document.getElementById('modal-desc');
 const btnStartAction = document.getElementById('btn-start-action');
 const btnEnterVr = document.getElementById('btn-enter-vr');
 const btnActionA = document.getElementById('btn-action-a');
+const btnSkipVideo = document.getElementById('btn-skip-video');
 const btnRecenter = document.getElementById('btn-recenter');
 const btnReset = document.getElementById('btn-reset');
 const dialogueBoxEl = document.getElementById('dialogue-box');
@@ -38,13 +42,13 @@ const dialogueTextEl = document.getElementById('dialogue-text');
 // Cena Three.js
 const container = document.getElementById('canvas-container');
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x050408);
+scene.background = new THREE.Color(0x000000);
 
 const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.05, 100);
 
 // Rig do Jogador (permite combinar caminhada física Room-Scale 6DoF + analógico/teclado)
 const playerRig = new THREE.Group();
-// Posição inicial sentado na cadeira no início da sala (Z = +1.45m, olhando para -Z)
+// Posição inicial sentado na cadeira no início da sala / banco da cabine (Z = +1.45m, olhando para -Z)
 playerRig.position.set(0, 0, 1.45);
 scene.add(playerRig);
 camera.position.set(0, 1.18, 0); // Altura sentado na cadeira
@@ -90,64 +94,98 @@ async function initCharacters() {
 initCharacters();
 
 // ============================================================================
-// ESFERA DE VÍDEO 360° (E PAINEL DE TEXTO DE 5 SEGUNDOS)
+// CABINE DE TREM 3D (JANELA À ESQUERDA COM Visao_Trem.mp4) E PORTA (Porta.mp4)
 // ============================================================================
-const video360Group = new THREE.Group();
-scene.add(video360Group);
+const trainVideoEl = document.createElement('video');
+trainVideoEl.src = '/video/Visao_Trem.mp4';
+trainVideoEl.crossOrigin = 'anonymous';
+trainVideoEl.playsInline = true;
+trainVideoEl.preload = 'auto';
+trainVideoEl.loop = false;
 
-const sphereGeo = new THREE.SphereGeometry(18, 48, 32);
-sphereGeo.scale(-1, 1, 1); // Inverte normais para ver por dentro da esfera 360
-
-// Textura estrelada 360° enquanto o vídeo real (/public/video/intro360.mp4) não foi gravado
-function create360PlaceholderSkyTexture() {
-  const c = document.createElement('canvas');
-  c.width = 1024;
-  c.height = 512;
-  const ctx = c.getContext('2d');
-  const grad = ctx.createLinearGradient(0, 0, 0, 512);
-  grad.addColorStop(0, '#050214');
-  grad.addColorStop(0.5, '#13092b');
-  grad.addColorStop(1, '#05020a');
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, 1024, 512);
-
-  for (let i = 0; i < 350; i++) {
-    ctx.fillStyle = i % 5 === 0 ? '#ffe885' : '#ffffff';
-    const r = Math.random() * 2.2;
-    ctx.beginPath();
-    ctx.arc(Math.random() * 1024, Math.random() * 512, r, 0, Math.PI * 2);
-    ctx.fill();
+trainVideoEl.addEventListener('loadedmetadata', () => {
+  if (currentState === STATE.WELCOME) {
+    trainVideoEl.currentTime = 0.05;
   }
-  const tex = new THREE.CanvasTexture(c);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  return tex;
+});
+
+trainVideoEl.addEventListener('ended', () => {
+  if (currentState === STATE.TRAIN_CABIN) {
+    transitionToState(STATE.TRAIN_DARK_TRANSITION);
+  }
+});
+
+const trainVideoTex = new THREE.VideoTexture(trainVideoEl);
+trainVideoTex.colorSpace = THREE.SRGBColorSpace;
+trainVideoTex.minFilter = THREE.LinearFilter;
+trainVideoTex.magFilter = THREE.LinearFilter;
+
+// Constrói a Cabine de Trem 3D com a janela à esquerda do usuário sentado
+const trainCabin = createTrainCabin(scene, trainVideoTex);
+
+// Vídeo da Porta (/video/Porta.mp4 - 720x1280 vertical) exibido à frente do usuário na escuridão
+const doorVideoEl = document.createElement('video');
+doorVideoEl.src = '/video/Porta.mp4';
+doorVideoEl.crossOrigin = 'anonymous';
+doorVideoEl.playsInline = true;
+doorVideoEl.preload = 'auto';
+doorVideoEl.loop = false;
+
+doorVideoEl.addEventListener('ended', () => {
+  if (currentState === STATE.DOOR_VIDEO) {
+    transitionToState(STATE.DOOR_DARK_TRANSITION);
+  }
+});
+
+const doorVideoTex = new THREE.VideoTexture(doorVideoEl);
+doorVideoTex.colorSpace = THREE.SRGBColorSpace;
+doorVideoTex.minFilter = THREE.LinearFilter;
+doorVideoTex.magFilter = THREE.LinearFilter;
+
+// Tela 3D vertical (proporção 9:16 = 720x1280) para reproduzir Porta.mp4 à frente do usuário
+const doorVideoMat = new THREE.MeshBasicMaterial({
+  map: doorVideoTex,
+  color: 0xffffff,
+  side: THREE.DoubleSide
+});
+const doorVideoMesh = new THREE.Mesh(
+  new THREE.PlaneGeometry(1.35, 2.40),
+  doorVideoMat
+);
+doorVideoMesh.visible = false;
+scene.add(doorVideoMesh);
+
+let doorVideoPrimed = false;
+
+function primeDoorVideoOnGesture() {
+  if (doorVideoPrimed) return;
+  doorVideoPrimed = true;
+  doorVideoEl.muted = true;
+  const p = doorVideoEl.play();
+  if (p && typeof p.then === 'function') {
+    p.then(() => {
+      if (currentState !== STATE.DOOR_VIDEO) {
+        doorVideoEl.pause();
+        doorVideoEl.currentTime = 0;
+      }
+      doorVideoEl.muted = false;
+    }).catch(() => {
+      doorVideoEl.muted = false;
+    });
+  }
 }
 
-const sphereMat = new THREE.MeshBasicMaterial({
-  map: create360PlaceholderSkyTexture()
-});
-const sphere360Mesh = new THREE.Mesh(sphereGeo, sphereMat);
-video360Group.add(sphere360Mesh);
-
-// Suporte pronto para Vídeo 360° real (/public/video/intro360.mp4) quando for produzido
-let hasReal360Video = false;
-const video360El = document.createElement('video');
-video360El.src = '/video/intro360.mp4';
-video360El.crossOrigin = 'anonymous';
-video360El.playsInline = true;
-video360El.preload = 'metadata';
-video360El.addEventListener('loadeddata', () => {
-  hasReal360Video = true;
-  const videoTex = new THREE.VideoTexture(video360El);
-  videoTex.colorSpace = THREE.SRGBColorSpace;
-  sphereMat.map = videoTex;
-  sphereMat.needsUpdate = true;
-});
-video360El.addEventListener('ended', () => {
-  if (currentState === STATE.VIDEO_360) {
-    transitionToState(STATE.DARK_TRANSITION);
+function playVideoElement(videoEl) {
+  videoEl.currentTime = 0;
+  videoEl.muted = false;
+  const p = videoEl.play();
+  if (p && typeof p.catch === 'function') {
+    p.catch(() => {
+      videoEl.muted = true;
+      videoEl.play().catch(() => {});
+    });
   }
-});
+}
 
 // Painel 3D Frontal dentro do VR (Usado para: Tela de Boas-Vindas, Texto 5s do Vídeo 360 e Tela Final)
 const vrBannerCanvas = document.createElement('canvas');
@@ -417,6 +455,20 @@ function speakCharacterDialogue(speaker, text, audioKey) {
   });
 }
 
+function positionDoorVideoInFrontOfPlayer() {
+  // Posiciona o vídeo Porta.mp4 (720x1280 vertical) diretamente à frente do usuário sentado (-Z no rig)
+  playerRig.updateWorldMatrix(true, false);
+  const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(playerRig.quaternion);
+  forward.y = 0;
+  if (forward.lengthSq() < 0.001) forward.set(0, 0, -1);
+  forward.normalize();
+
+  const camPos = getPlayerWorldPosition();
+  doorVideoMesh.position.copy(camPos).addScaledVector(forward, 1.95);
+  doorVideoMesh.position.y = 1.22;
+  doorVideoMesh.lookAt(camPos.x, 1.22, camPos.z);
+}
+
 function transitionToState(newState) {
   currentState = newState;
   stateTimer = 0;
@@ -429,12 +481,24 @@ function transitionToState(newState) {
 
   switch (newState) {
     case STATE.WELCOME: {
-      phaseLabelEl.textContent = '1/7 • Tela de Boas-Vindas (Aperte Botão A)';
+      phaseLabelEl.textContent = '1/8 • Cabine do Trem — Aguardando Início (Aperte A)';
       welcomeModalEl.classList.remove('hidden');
       modalTitleEl.textContent = 'Bem-vindo à Escola de Magia do Luigi e da Letícia!';
       modalDescEl.innerHTML =
-        'Sente-se na cadeira, coloque o Meta Quest 3 e aperte apenas o <strong>Botão [A]</strong> do controle direito para começar!';
-      btnStartAction.textContent = '▶ Iniciar Experiência (Botão A / Espaço)';
+        'Você está na cabine do Expresso Mágico! Coloque o Meta Quest 3 e aperte o <strong>Botão [A]</strong> do controle direito para começar a viagem!';
+      btnStartAction.textContent = '▶ Iniciar Viagem de Trem (Botão A / Espaço)';
+
+      // Pausa vídeos de abertura e para trilha ambiente
+      trainVideoEl.pause();
+      if (trainVideoEl.readyState >= 1) {
+        trainVideoEl.currentTime = 0.05;
+      }
+      doorVideoEl.pause();
+      if (doorVideoEl.readyState >= 1) {
+        doorVideoEl.currentTime = 0;
+      }
+      audio.stopAmbientMagic();
+      audio.stopSpeech();
 
       // Reseta estado da sala, varinhas e pena
       hasWand = false;
@@ -449,62 +513,110 @@ function transitionToState(newState) {
       classroom.featherGroup.position.copy(classroom.featherRestPos);
       classroom.featherGroup.rotation.set(0, 0, 0);
 
-      // Jogador de volta na cadeira no início da sala (ou mantém alinhado aos 4 QR Codes físicos se ativos)
+      // Jogador sentado no banco da cabine de trem (ou mantém alinhado aos 4 QR Codes físicos se ativos)
       if (!qrFloorAnchor.applyAnchorToRig(playerRig, false)) {
         playerRig.position.set(0, 0, 1.45);
         playerRig.rotation.set(0, 0, 0);
         camera.rotation.set(0, 0, 0);
       }
 
-      classroom.roomGroup.visible = true;
-      classroom.setRoomBrightness(0.35);
-      video360Group.visible = false;
+      // Exibe a Cabine de Trem 3D como cenário inicial e esconde a sala e a porta
+      trainCabin.cabinGroup.visible = true;
+      trainCabin.setCabinBrightness(0.75);
+      classroom.roomGroup.visible = false;
+      doorVideoMesh.visible = false;
       blackoutMat.opacity = 0;
       vrBannerMesh.visible = true;
 
       drawVrBanner({
-        badge: '🦁 ANIVERSÁRIO DO LUIGI & DA LETÍCIA 🪄',
-        title: 'Bem-vindo à Escola de Magia!',
-        subtitle: 'Sente-se confortavelmente na cadeira.\nPara iniciar sua jornada mágica:',
+        badge: '🚂 EXPRESSO DA ESCOLA DE MAGIA • LUIGI & LETÍCIA 🪄',
+        title: 'Bem-vindo a Bordo!',
+        subtitle: 'Sente-se confortavelmente na cabine do trem.\nOlhe pela janela à sua esquerda quando a viagem começar!',
         footer: '👉 Aperte o Botão [A] no controle direito'
       });
 
       setHUDDialogue('', '');
-      audio.stopSpeech();
       break;
     }
 
-    case STATE.VIDEO_360: {
-      phaseLabelEl.textContent = '2/7 • Vídeo 360° de Abertura (5 segundos)';
+    case STATE.TRAIN_CABIN: {
+      phaseLabelEl.textContent = '2/8 • Cabine de Trem (Vídeo Visao_Trem.mp4 na janela à esquerda)';
       welcomeModalEl.classList.add('hidden');
       audio.playStartChime();
-      audio.startAmbientMagic();
 
-      // Esconde a sala 3D e exibe a esfera 360° ao redor do usuário sentado
+      // Garante que apenas a Cabine de Trem 3D esteja visível com a paisagem na janela esquerda
+      trainCabin.cabinGroup.visible = true;
+      trainCabin.setCabinBrightness(1.0);
       classroom.roomGroup.visible = false;
-      video360Group.visible = true;
+      doorVideoMesh.visible = false;
+      vrBannerMesh.visible = false;
       blackoutMat.opacity = 0;
-      vrBannerMesh.visible = !hasReal360Video;
-      if (hasReal360Video) {
-        video360El.currentTime = 0;
-        video360El.play().catch(() => {});
+
+      // No simulador de PC/Mac (fora do VR), orienta suavemente a câmera na diagonal esquerda
+      // para mostrar de imediato os bancos 3D da cabine e a janela à esquerda com o vídeo!
+      if (!renderer.xr.isPresenting) {
+        playerRig.rotation.y = 0.85;
+        camera.rotation.x = -0.03;
       }
+
+      playVideoElement(trainVideoEl);
       setHUDDialogue('', '');
       break;
     }
 
-    case STATE.DARK_TRANSITION: {
-      phaseLabelEl.textContent = '3/7 • Fim do Filme 360° (Tudo Escuro...)';
+    case STATE.TRAIN_DARK_TRANSITION: {
+      phaseLabelEl.textContent = '3/8 • Fim da Viagem de Trem (Tudo Escuro...)';
+      trainVideoEl.pause();
+
+      // "Ao final do video escuresse tudo e desaparece tudo e fica tudo escuro"
+      trainCabin.cabinGroup.visible = false;
+      classroom.roomGroup.visible = false;
+      doorVideoMesh.visible = false;
       vrBannerMesh.visible = false;
+      blackoutMat.opacity = 1.0;
+
+      // No modo Desktop (PC/Mac), realinha o olhar para frente (-Z) enquanto está tudo escuro
+      // para que o vídeo Porta.mp4 apareça bem à frente do usuário
+      if (!renderer.xr.isPresenting) {
+        playerRig.rotation.y = 0;
+        camera.rotation.x = 0;
+      }
+      break;
+    }
+
+    case STATE.DOOR_VIDEO: {
+      phaseLabelEl.textContent = '4/8 • Vídeo Porta.mp4 à frente do usuário';
+      trainCabin.cabinGroup.visible = false;
+      classroom.roomGroup.visible = false;
+      vrBannerMesh.visible = false;
+
+      // Posiciona e exibe o vídeo Porta.mp4 à frente do usuário no ambiente totalmente escuro
+      positionDoorVideoInFrontOfPlayer();
+      doorVideoMesh.visible = true;
+      doorVideoMat.color.setScalar(1.0);
+      playVideoElement(doorVideoEl);
+      break;
+    }
+
+    case STATE.DOOR_DARK_TRANSITION: {
+      phaseLabelEl.textContent = '5/8 • Porta Mágica Transicionando (Tudo Escuro...)';
+      doorVideoEl.pause();
+      doorVideoMesh.visible = false;
+      trainCabin.cabinGroup.visible = false;
+      classroom.roomGroup.visible = false;
+      vrBannerMesh.visible = false;
+      blackoutMat.opacity = 1.0;
       break;
     }
 
     case STATE.ROOM_AWAKEN: {
-      phaseLabelEl.textContent = '4/7 • Despertando na Sala de Escola de Bruxos';
-      video360Group.visible = false;
+      phaseLabelEl.textContent = '6/8 • Despertando na Sala de Escola de Bruxos';
+      trainCabin.cabinGroup.visible = false;
+      doorVideoMesh.visible = false;
       classroom.roomGroup.visible = true;
       classroom.setRoomBrightness(0.0);
       vrBannerMesh.visible = false;
+      audio.startAmbientMagic();
 
       // Posiciona o jogador sentado na cadeira no início da sala (ou mantém a sala travada nos QR Codes do chão)
       if (!qrFloorAnchor.applyAnchorToRig(playerRig, false)) {
@@ -514,7 +626,7 @@ function transitionToState(newState) {
     }
 
     case STATE.GO_TO_LETICIA: {
-      phaseLabelEl.textContent = '5/7 • Vá até o final da sala falar com a Letícia';
+      phaseLabelEl.textContent = '7/8 • Vá até o final da sala falar com a Letícia';
       classroom.setRoomBrightness(1.0);
       const msg =
         'Olá! Bem-vindo à nossa Escola de Magia! Venha andando até aqui no final da sala para escolher sua varinha!';
@@ -523,7 +635,7 @@ function transitionToState(newState) {
     }
 
     case STATE.SELECT_WAND: {
-      phaseLabelEl.textContent = '5/7 • Escolha uma Varinha na mesa ao lado da Letícia';
+      phaseLabelEl.textContent = '7/8 • Escolha uma Varinha na mesa ao lado da Letícia';
       const msg =
         'Que demais que você veio! Escolha uma varinha mágica na mesa ao meu lado! Basta encostar sua mão nela ou apertar o botão A!';
       speakCharacterDialogue('Letícia', msg, 'leticia_2');
@@ -531,7 +643,7 @@ function transitionToState(newState) {
     }
 
     case STATE.GO_TO_LUIGI: {
-      phaseLabelEl.textContent = '6/7 • Volte ao início da sala (Mesa da Professora com o Luigi)';
+      phaseLabelEl.textContent = '8/8 • Volte ao início da sala (Mesa da Professora com o Luigi)';
       const msg =
         'A varinha escolheu você! Agora volte até o início da sala, perto da mesa da professora, onde o Luigi vai te ajudar a fazer a magia!';
       speakCharacterDialogue('Letícia', msg, 'leticia_3');
@@ -539,7 +651,7 @@ function transitionToState(newState) {
     }
 
     case STATE.CAST_SPELL: {
-      phaseLabelEl.textContent = '7/7 • Faça o feitiço "Wingardium Leviosa" na Pena Branca!';
+      phaseLabelEl.textContent = '8/8 • Faça o feitiço "Wingardium Leviosa" na Pena Branca!';
       spellProgress = 0;
       magicParticles.visible = true;
       const msg =
@@ -562,15 +674,29 @@ function transitionToState(newState) {
   }
 }
 
+// Permite ao operador pular o vídeo de abertura atual durante testes (Tecla [P] ou botão no HUD)
+function skipCurrentIntroVideo() {
+  if (currentState === STATE.TRAIN_CABIN) {
+    transitionToState(STATE.TRAIN_DARK_TRANSITION);
+  } else if (currentState === STATE.TRAIN_DARK_TRANSITION) {
+    transitionToState(STATE.DOOR_VIDEO);
+  } else if (currentState === STATE.DOOR_VIDEO) {
+    transitionToState(STATE.DOOR_DARK_TRANSITION);
+  } else if (currentState === STATE.DOOR_DARK_TRANSITION) {
+    transitionToState(STATE.ROOM_AWAKEN);
+  }
+}
+
 // ============================================================================
 // AÇÃO DO BOTÃO "A" (UNIVERSAL E FÁCIL PARA QUALQUER CRIANÇA OU CONVIDADO)
 // ============================================================================
 function handlePrimaryActionButtonA() {
   audio.init();
+  primeDoorVideoOnGesture();
   triggerControllerHaptics(0.6, 80);
 
   if (currentState === STATE.WELCOME) {
-    transitionToState(STATE.VIDEO_360);
+    transitionToState(STATE.TRAIN_CABIN);
     return;
   }
 
@@ -844,6 +970,9 @@ window.addEventListener('keydown', (e) => {
   if (k === 'KeyE' || k === 'Enter') {
     handlePrimaryActionButtonA();
   }
+  if (k === 'KeyP') {
+    skipCurrentIntroVideo();
+  }
   if (k === 'KeyB') {
     recenterChairPosition();
   }
@@ -896,6 +1025,9 @@ window.addEventListener('pointermove', (e) => {
 // Botões da interface
 btnStartAction.addEventListener('click', () => handlePrimaryActionButtonA());
 btnActionA.addEventListener('click', () => handlePrimaryActionButtonA());
+if (btnSkipVideo) {
+  btnSkipVideo.addEventListener('click', () => skipCurrentIntroVideo());
+}
 btnRecenter.addEventListener('click', () => recenterChairPosition());
 btnReset.addEventListener('click', () => transitionToState(STATE.WELCOME));
 
@@ -1127,10 +1259,8 @@ renderer.setAnimationLoop((timestamp, frame) => {
   const playerPos = getPlayerWorldPosition();
   const wandTipPos = getWandTipWorldPosition();
 
-  // Centraliza a esfera 360 na cabeça do usuário quando ativa
-  if (video360Group.visible) {
-    video360Group.position.copy(playerPos);
-  }
+  // Atualiza a Cabine de Trem 3D quando visível
+  trainCabin.update(elapsed);
 
   // Atualiza personagens 3D (Letícia e Luigi)
   if (leticiaChar) leticiaChar.update(elapsed, playerPos);
@@ -1149,45 +1279,63 @@ renderer.setAnimationLoop((timestamp, frame) => {
       break;
     }
 
-    case STATE.VIDEO_360: {
-      if (hasReal360Video) break;
+    case STATE.TRAIN_CABIN: {
       stateTimer += dt;
-      const remaining = Math.max(0, 5.0 - stateTimer);
-      const progress = stateTimer / 5.0;
-
-      alignBannerInFrontOfPlayer(1.8);
-      drawVrBanner({
-        badge: '🎬 VÍDEO 360° DE ABERTURA (PLACEHOLDER 5s)',
-        title: 'A Jornada para a Escola de Bruxos...',
-        subtitle:
-          'Aqui entrará o vídeo 360° com o convidado sentado.\nPrepare-se: a aula do Luigi e da Letícia já vai começar!',
-        progress,
-        footer: `Iniciando em ${remaining.toFixed(1)}s...`
-      });
-
-      // Nos últimos 0.8s dos 5s começa a escurecer
-      if (stateTimer >= 4.2) {
-        blackoutMat.opacity = THREE.MathUtils.clamp((stateTimer - 4.2) / 0.8, 0, 1);
-      }
-
-      if (stateTimer >= 5.0) {
-        transitionToState(STATE.DARK_TRANSITION);
+      // Nos últimos 1.0s do vídeo Visao_Trem.mp4, escurece suavemente a cabine e a visão
+      const dur = trainVideoEl.duration;
+      if (Number.isFinite(dur) && dur > 0) {
+        const remaining = dur - trainVideoEl.currentTime;
+        if (remaining <= 1.0) {
+          const fadeOut = THREE.MathUtils.clamp(1.0 - remaining / 1.0, 0, 1);
+          blackoutMat.opacity = fadeOut;
+          trainCabin.setCabinBrightness(1.0 - fadeOut);
+        } else {
+          blackoutMat.opacity = 0;
+          trainCabin.setCabinBrightness(1.0);
+        }
       }
       break;
     }
 
-    case STATE.DARK_TRANSITION: {
-      // "A ideia é que o filme finalize e fique tudo escuro"
+    case STATE.TRAIN_DARK_TRANSITION: {
+      // "Ao final do video escuresse tudo e desaparece tudo e fica tudo escuro"
       stateTimer += dt;
       blackoutMat.opacity = 1.0;
-      if (stateTimer >= 1.5) {
+      if (stateTimer >= 1.2) {
+        transitionToState(STATE.DOOR_VIDEO);
+      }
+      break;
+    }
+
+    case STATE.DOOR_VIDEO: {
+      // "...e inicia o video Porta.mp4 a frente do usuário"
+      stateTimer += dt;
+      const dur = doorVideoEl.duration;
+      if (stateTimer < 0.6) {
+        // Revela suavemente o vídeo da porta à frente do usuário na escuridão
+        blackoutMat.opacity = THREE.MathUtils.clamp(1.0 - stateTimer / 0.6, 0, 1);
+      } else if (Number.isFinite(dur) && dur > 0 && dur - doorVideoEl.currentTime <= 0.8) {
+        // "Ao final do video escurresse tudo de novo"
+        const remaining = dur - doorVideoEl.currentTime;
+        blackoutMat.opacity = THREE.MathUtils.clamp(1.0 - remaining / 0.8, 0, 1);
+      } else {
+        blackoutMat.opacity = 0;
+      }
+      break;
+    }
+
+    case STATE.DOOR_DARK_TRANSITION: {
+      // "Ao final do video escurresse tudo de novo e inicia o jogo"
+      stateTimer += dt;
+      blackoutMat.opacity = 1.0;
+      if (stateTimer >= 1.0) {
         transitionToState(STATE.ROOM_AWAKEN);
       }
       break;
     }
 
     case STATE.ROOM_AWAKEN: {
-      // "Ao pouco vai iniciando a experiência com o usuário sentado em uma cadeira na sala de escola de bruxos"
+      // Aos poucos vai iniciando a experiência com o usuário sentado na cadeira da sala de escola de bruxos
       stateTimer += dt;
       const awakenProgress = THREE.MathUtils.clamp(stateTimer / 3.2, 0, 1);
       blackoutMat.opacity = 1.0 - awakenProgress;
