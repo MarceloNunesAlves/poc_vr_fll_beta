@@ -890,8 +890,14 @@ function pickupClosestWand(preselectedWand = null) {
   if (chosen) {
     chosen.visible = false;
     chosen.userData.isHovered = false;
-    // Aplica na varinha da mão exatamente a madeira e o brilho da varinha escolhida na mesa!
-    if (playerWand.userData.setColors) {
+    // Aplica na varinha da mão exatamente o modelo 3D (.glb) e o brilho da varinha escolhida na mesa!
+    if (playerWand.userData.setWandModel) {
+      playerWand.userData.setWandModel(
+        chosen.userData.glbUrl,
+        chosen.userData.woodColor,
+        chosen.userData.glowColor
+      );
+    } else if (playerWand.userData.setColors) {
       playerWand.userData.setColors(chosen.userData.woodColor, chosen.userData.glowColor);
     }
     spellBeamMat.color.setHex(chosen.userData.glowColor || 0xffe885);

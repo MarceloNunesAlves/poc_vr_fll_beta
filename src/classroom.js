@@ -1,5 +1,149 @@
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { FLOOR_QR_CORNERS, QR_PHYSICAL_SIZE_METERS, generateCornerQrCanvas } from './qrFloorAnchors.js';
+
+const wandGltfLoader = new GLTFLoader();
+const wandModelCache = new Map();
+
+/**
+ * Carrega e normaliza um modelo .glb de varinha para o sistema de coordenadas da mão/mesa:
+ * - Alinha automaticamente o eixo principal (do cabo mais grosso em z = +0.11 até a ponta fina em z = -0.275)
+ * - Escala para 38,5 cm de comprimento real em VR (0.385m)
+ */
+function loadNormalizedWandGlb(glbUrl) {
+  if (wandModelCache.has(glbUrl)) {
+    return wandModelCache.get(glbUrl).then((template) => template.clone(true));
+  }
+
+  const promise = new Promise((resolve, reject) => {
+    wandGltfLoader.load(
+      glbUrl,
+      (gltf) => {
+        const rawScene = gltf.scene;
+        rawScene.updateMatrixWorld(true);
+
+        // Coleta amostra de vértices em espaço mundial do GLB para achar o eixo principal (PCA)
+        const points = [];
+        rawScene.traverse((child) => {
+          if (child.isMesh && child.geometry && child.geometry.attributes.position) {
+            const posAttr = child.geometry.attributes.position;
+            const step = Math.max(1, Math.floor(posAttr.count / 2000));
+            for (let i = 0; i < posAttr.count; i += step) {
+              const v = new THREE.Vector3().fromBufferAttribute(posAttr, i).applyMatrix4(child.matrixWorld);
+              points.push(v);
+            }
+
+            // Ajusta materiais PBR para brilharem bem sob a iluminação de velas da sala
+            const mats = Array.isArray(child.material) ? child.material : [child.material];
+            mats.forEach((m) => {
+              if (!m) return;
+              if (typeof m.metalness === 'number') m.metalness = Math.min(m.metalness, 0.35);
+              if (typeof m.roughness === 'number') m.roughness = Math.max(m.roughness, 0.35);
+              m.needsUpdate = true;
+            });
+          }
+        });
+
+        const normalizedGroup = new THREE.Group();
+
+        if (points.length > 10) {
+          const mean = new THREE.Vector3();
+          points.forEach((p) => mean.add(p));
+          mean.divideScalar(points.length);
+
+          let cxx = 0, cxy = 0, cxz = 0, cyy = 0, cyz = 0, czz = 0;
+          points.forEach((p) => {
+            const x = p.x - mean.x;
+            const y = p.y - mean.y;
+            const z = p.z - mean.z;
+            cxx += x * x; cxy += x * y; cxz += x * z;
+            cyy += y * y; cyz += y * z; czz += z * z;
+          });
+
+          // Power iteration para o autovetor dominante (comprimento da varinha)
+          const axis = new THREE.Vector3(1, 1, 0.1).normalize();
+          for (let iter = 0; iter < 30; iter++) {
+            const nx = cxx * axis.x + cxy * axis.y + cxz * axis.z;
+            const ny = cxy * axis.x + cyy * axis.y + cyz * axis.z;
+            const nz = cxz * axis.x + cyz * axis.y + czz * axis.z;
+            axis.set(nx, ny, nz).normalize();
+          }
+
+          let minProj = Infinity;
+          let maxProj = -Infinity;
+          points.forEach((p) => {
+            const proj = (p.x - mean.x) * axis.x + (p.y - mean.y) * axis.y + (p.z - mean.z) * axis.z;
+            if (proj < minProj) minProj = proj;
+            if (proj > maxProj) maxProj = proj;
+          });
+
+          const span = Math.max(0.001, maxProj - minProj);
+          let rMinSum = 0, rMinCnt = 0, rMaxSum = 0, rMaxCnt = 0;
+          points.forEach((p) => {
+            const dx = p.x - mean.x;
+            const dy = p.y - mean.y;
+            const dz = p.z - mean.z;
+            const proj = dx * axis.x + dy * axis.y + dz * axis.z;
+            const px = dx - proj * axis.x;
+            const py = dy - proj * axis.y;
+            const pz = dz - proj * axis.z;
+            const r = Math.hypot(px, py, pz);
+            if (proj < minProj + span * 0.25) {
+              rMinSum += r;
+              rMinCnt++;
+            }
+            if (proj > maxProj - span * 0.25) {
+              rMaxSum += r;
+              rMaxCnt++;
+            }
+          });
+
+          // Garante que o vetor 'axis' aponte do cabo (mais espesso) para a ponta (mais fina)
+          const rMinAvg = rMinCnt > 0 ? rMinSum / rMinCnt : 0;
+          const rMaxAvg = rMaxCnt > 0 ? rMaxSum / rMaxCnt : 0;
+          if (rMaxAvg > rMinAvg) {
+            axis.negate();
+          }
+
+          // Rotaciona o modelo para que cabo -> ponta aponte para -Z (0, 0, -1)
+          const targetDir = new THREE.Vector3(0, 0, -1);
+          const alignQuat = new THREE.Quaternion().setFromUnitVectors(axis, targetDir);
+          rawScene.quaternion.premultiply(alignQuat);
+          rawScene.updateMatrixWorld(true);
+
+          // Calcula bounding box já rotacionado e escala para 0.385m (de z=-0.275 na ponta até z=+0.11 no cabo)
+          const rotBox = new THREE.Box3().setFromObject(rawScene);
+          const rotSize = new THREE.Vector3();
+          const rotCenter = new THREE.Vector3();
+          rotBox.getSize(rotSize);
+          rotBox.getCenter(rotCenter);
+
+          const targetLength = 0.385;
+          const scale = targetLength / Math.max(rotSize.z, 0.001);
+          rawScene.scale.multiplyScalar(scale);
+          rawScene.updateMatrixWorld(true);
+
+          const finalBox = new THREE.Box3().setFromObject(rawScene);
+          const finalCenter = new THREE.Vector3();
+          finalBox.getCenter(finalCenter);
+
+          // Posiciona a ponta fina exatamente em z = -0.275 (onde fica a esfera luminosa da magia)
+          rawScene.position.x -= finalCenter.x;
+          rawScene.position.y -= finalCenter.y;
+          rawScene.position.z += -0.275 - finalBox.min.z;
+        }
+
+        normalizedGroup.add(rawScene);
+        resolve(normalizedGroup);
+      },
+      undefined,
+      (err) => reject(err)
+    );
+  });
+
+  wandModelCache.set(glbUrl, promise);
+  return promise.then((template) => template.clone(true));
+}
 
 /**
  * Gera texturas procedurais de pedra de castelo e madeira antiga em Canvas
@@ -120,12 +264,17 @@ function createLargeWhiteFeather() {
 }
 
 /**
- * Cria um modelo 3D de Varinha Mágica
+ * Cria um modelo 3D de Varinha Mágica (carregando o arquivo .glb correspondente e mantendo
+ * a esfera luminosa na ponta z = -0.275 para os feitiços!)
  */
-export function createWandMesh(woodColor = 0x5c3317, glowColor = 0xffd700) {
+export function createWandMesh(woodColor = 0x5c3317, glowColor = 0xffd700, glbUrl = '/models/varinha_1.glb') {
   const wand = new THREE.Group();
 
-  // Cabo entalhado
+  // Grupo interno para a geometria procedural de fallback (visível apenas até o .glb carregar)
+  const fallbackBody = new THREE.Group();
+  wand.add(fallbackBody);
+
+  // Cabo entalhado (fallback)
   const handleGeo = new THREE.CylinderGeometry(0.014, 0.018, 0.12, 14);
   handleGeo.rotateX(Math.PI / 2);
   const handleMat = new THREE.MeshStandardMaterial({
@@ -135,9 +284,9 @@ export function createWandMesh(woodColor = 0x5c3317, glowColor = 0xffd700) {
   });
   const handle = new THREE.Mesh(handleGeo, handleMat);
   handle.position.z = 0.05;
-  wand.add(handle);
+  fallbackBody.add(handle);
 
-  // Anel dourado decorativo entre o cabo e a haste
+  // Anel dourado decorativo entre o cabo e a haste (fallback)
   const ringGeo = new THREE.TorusGeometry(0.0145, 0.003, 8, 16);
   const ringMat = new THREE.MeshStandardMaterial({
     color: 0xf5d061,
@@ -148,9 +297,9 @@ export function createWandMesh(woodColor = 0x5c3317, glowColor = 0xffd700) {
   });
   const guardRing = new THREE.Mesh(ringGeo, ringMat);
   guardRing.position.z = -0.01;
-  wand.add(guardRing);
+  fallbackBody.add(guardRing);
 
-  // Haste afilada da varinha
+  // Haste afilada da varinha (fallback)
   const tipGeo = new THREE.CylinderGeometry(0.0045, 0.012, 0.27, 14);
   tipGeo.rotateX(Math.PI / 2);
   const tipMat = new THREE.MeshStandardMaterial({
@@ -159,10 +308,14 @@ export function createWandMesh(woodColor = 0x5c3317, glowColor = 0xffd700) {
   });
   const shaft = new THREE.Mesh(tipGeo, tipMat);
   shaft.position.z = -0.135;
-  wand.add(shaft);
+  fallbackBody.add(shaft);
+
+  // Container para o modelo 3D .glb carregado
+  const glbHolder = new THREE.Group();
+  wand.add(glbHolder);
 
   // Esfera luminosa na ponta da varinha
-  const orbGeo = new THREE.SphereGeometry(0.013, 16, 16);
+  const orbGeo = new THREE.SphereGeometry(0.011, 16, 16);
   const orbMat = new THREE.MeshBasicMaterial({
     color: glowColor
   });
@@ -171,7 +324,7 @@ export function createWandMesh(woodColor = 0x5c3317, glowColor = 0xffd700) {
   wand.add(orb);
 
   // Halo mágico suave ao redor da ponta
-  const haloGeo = new THREE.SphereGeometry(0.024, 16, 16);
+  const haloGeo = new THREE.SphereGeometry(0.022, 16, 16);
   const haloMat = new THREE.MeshBasicMaterial({
     color: glowColor,
     transparent: true,
@@ -179,6 +332,8 @@ export function createWandMesh(woodColor = 0x5c3317, glowColor = 0xffd700) {
   });
   const orbHalo = new THREE.Mesh(haloGeo, haloMat);
   orb.add(orbHalo);
+
+  let currentLoadToken = 0;
 
   const setColors = (newWood, newGlow) => {
     wand.userData.woodColor = newWood;
@@ -189,9 +344,29 @@ export function createWandMesh(woodColor = 0x5c3317, glowColor = 0xffd700) {
     haloMat.color.setHex(newGlow);
   };
 
+  const setWandModel = (newGlbUrl, newWood = wand.userData.woodColor, newGlow = wand.userData.glowColor) => {
+    setColors(newWood, newGlow);
+    if (!newGlbUrl) return;
+    wand.userData.glbUrl = newGlbUrl;
+    const token = ++currentLoadToken;
+
+    loadNormalizedWandGlb(newGlbUrl)
+      .then((modelGroup) => {
+        if (token !== currentLoadToken) return;
+        glbHolder.clear();
+        glbHolder.add(modelGroup);
+        fallbackBody.visible = false;
+      })
+      .catch(() => {
+        if (token !== currentLoadToken) return;
+        fallbackBody.visible = true;
+      });
+  };
+
   wand.userData = {
     woodColor,
     glowColor,
+    glbUrl,
     orb,
     orbHalo,
     handleMat,
@@ -199,8 +374,14 @@ export function createWandMesh(woodColor = 0x5c3317, glowColor = 0xffd700) {
     orbMat,
     haloMat,
     setColors,
+    setWandModel,
     isHovered: false
   };
+
+  if (glbUrl) {
+    setWandModel(glbUrl, woodColor, glowColor);
+  }
+
   return wand;
 }
 
@@ -489,16 +670,34 @@ export function createWizardClassroom(scene) {
   wandTable.position.set(-0.32, 0, -1.52);
   roomGroup.add(wandTable);
 
-  // 3 Varinhas Mágicas selecionáveis sobre a mesa
+  // 3 Varinhas Mágicas selecionáveis sobre a mesa (usando os modelos 3D .glb)
   const wandsOnTable = [];
   const wandConfigs = [
-    { wood: 0x5c3317, glow: 0xffd700, offsetX: -0.18, name: 'Varinha de Fênix Dourada' },
-    { wood: 0x2b1b12, glow: 0x60a5fa, offsetX: 0.0, name: 'Varinha Estelar Azul' },
-    { wood: 0x8b4513, glow: 0xf472b6, offsetX: 0.18, name: 'Varinha Encantada Rubi' }
+    {
+      wood: 0x5c3317,
+      glow: 0xffd700,
+      offsetX: -0.18,
+      glbUrl: '/models/varinha_1.glb',
+      name: 'Varinha 1 — Fênix Dourada'
+    },
+    {
+      wood: 0x2b1b12,
+      glow: 0x60a5fa,
+      offsetX: 0.0,
+      glbUrl: '/models/varinha_2.glb',
+      name: 'Varinha 2 — Estelar Azul'
+    },
+    {
+      wood: 0x8b4513,
+      glow: 0xf472b6,
+      offsetX: 0.18,
+      glbUrl: '/models/varinha_3.glb',
+      name: 'Varinha 3 — Encantada Rubi'
+    }
   ];
 
   wandConfigs.forEach((cfg, idx) => {
-    const wMesh = createWandMesh(cfg.wood, cfg.glow);
+    const wMesh = createWandMesh(cfg.wood, cfg.glow, cfg.glbUrl);
     // Centraliza o comprimento da varinha sobre a almofada da mesa
     wMesh.position.set(
       wandTable.position.x + cfg.offsetX,
