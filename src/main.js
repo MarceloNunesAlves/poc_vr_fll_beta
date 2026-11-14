@@ -1268,9 +1268,13 @@ renderer.setAnimationLoop((timestamp, frame) => {
   // Atualiza a Cabine de Trem 3D quando visível
   trainCabin.update(elapsed);
 
-  // Atualiza personagens 3D (Letícia e Luigi)
-  if (leticiaChar) leticiaChar.update(elapsed, playerPos);
-  if (luigiChar) luigiChar.update(elapsed, playerPos);
+  // Atualiza personagens 3D (Letícia e Luigi) com sincronia labial da boca 3D sobreposta (Opção A.2)
+  if (leticiaChar) {
+    leticiaChar.update(elapsed, playerPos, audio.getSpeechLevel('Letícia', elapsed));
+  }
+  if (luigiChar) {
+    luigiChar.update(elapsed, playerPos, audio.getSpeechLevel('Luigi', elapsed));
+  }
 
   // Direção das pegadas mágicas no chão (1 = rumo à Letícia, -1 = rumo ao Luigi)
   let pathDir = 0;

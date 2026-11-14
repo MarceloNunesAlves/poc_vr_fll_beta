@@ -9,6 +9,9 @@ export class MagicAudioSystem {
     this.currentAudio = null;
     this.currentSourceNode = null;
     this.activeSpeechKey = null;
+    this.activeSpeaker = null;
+    this.analyser = null;
+    this.analyserData = null;
     this.speechCounter = 0;
     this.currentSpeechId = 0;
     this.fallbackEndTimer = null;
@@ -186,6 +189,13 @@ export class MagicAudioSystem {
         this.ctx.resume().catch(() => {});
       }
 
+      if (!this.analyser) {
+        this.analyser = this.ctx.createAnalyser();
+        this.analyser.fftSize = 256;
+        this.analyser.smoothingTimeConstant = 0.5;
+        this.analyserData = new Uint8Array(this.analyser.fftSize);
+      }
+
       const source = this.ctx.createBufferSource();
       source.buffer = audioBuffer;
       // Leve ajuste de tom para deixar as vozes ainda mais animadas
@@ -196,10 +206,12 @@ export class MagicAudioSystem {
       gain.gain.value = 1.4; // Destaca a voz de forma nítida sobre o som ambiente mágico
 
       source.connect(gain);
-      gain.connect(this.ctx.destination);
+      gain.connect(this.analyser);
+      this.analyser.connect(this.ctx.destination);
 
       const finishSpeech = () => {
         if (this.currentSpeechId !== speechId) return;
+        this.activeSpeaker = null;
         if (this.fallbackEndTimer) {
           clearTimeout(this.fallbackEndTimer);
           this.fallbackEndTimer = null;
@@ -213,6 +225,7 @@ export class MagicAudioSystem {
       };
 
       this.currentSourceNode = source;
+      this.activeSpeaker = character;
       source.onended = finishSpeech;
 
       // Timer de segurança baseado na duração exata do buffer caso o contexto de áudio esteja suspenso
@@ -225,6 +238,36 @@ export class MagicAudioSystem {
       console.warn('Erro ao tocar buffer de voz:', err);
       return false;
     }
+  }
+
+  /**
+   * Retorna a intensidade da fala em tempo real [0..1] para animar a boca 3D sobreposta (Opção A.2)
+   */
+  getSpeechLevel(character, elapsed = 0) {
+    if (this.activeSpeaker !== character) return 0;
+
+    if (this.currentSourceNode && this.analyser && this.analyserData && this.ctx && this.ctx.state === 'running') {
+      this.analyser.getByteTimeDomainData(this.analyserData);
+      let sumSquares = 0;
+      let peak = 0;
+      const len = this.analyserData.length;
+      for (let i = 0; i < len; i++) {
+        const centered = (this.analyserData[i] - 128) / 128;
+        const abs = Math.abs(centered);
+        if (abs > peak) peak = abs;
+        sumSquares += centered * centered;
+      }
+      const rms = Math.sqrt(sumSquares / len);
+      const energy = rms * 2.8 + peak * 0.9;
+      if (energy < 0.045) return 0;
+      return Math.min(1, (energy - 0.045) * 2.5);
+    }
+
+    // Fallback procedural de sílabas (HTMLAudio / TTS)
+    const syllableWave =
+      Math.max(0, Math.sin(elapsed * 15.5) * 0.65 + Math.sin(elapsed * 6.8) * 0.45) *
+      (0.55 + 0.45 * Math.sin(elapsed * 2.9));
+    return Math.min(1, syllableWave);
   }
 
   /**
@@ -241,6 +284,7 @@ export class MagicAudioSystem {
     const speechId = ++this.speechCounter;
     this.currentSpeechId = speechId;
     this.activeSpeechKey = audioKey;
+    this.activeSpeaker = character;
 
     if (audioKey) {
       const cachedBuffer = this.voiceBuffers.get(audioKey);
@@ -260,8 +304,11 @@ export class MagicAudioSystem {
         const audio = new Audio(`/audio/${audioKey}.wav`);
         this.currentAudio = audio;
         audio.onended = () => {
-          if (this.currentSpeechId === speechId && typeof onEnded === 'function') {
-            onEnded();
+          if (this.currentSpeechId === speechId) {
+            this.activeSpeaker = null;
+            if (typeof onEnded === 'function') {
+              onEnded();
+            }
           }
         };
         audio.play().catch(() => {
@@ -277,8 +324,11 @@ export class MagicAudioSystem {
   speakTTS(character, text, speechId, onEnded = null) {
     const estimatedMs = Math.max(3800, (text ? text.length : 40) * 70);
     this.fallbackEndTimer = setTimeout(() => {
-      if (this.currentSpeechId === speechId && typeof onEnded === 'function') {
-        onEnded();
+      if (this.currentSpeechId === speechId) {
+        this.activeSpeaker = null;
+        if (typeof onEnded === 'function') {
+          onEnded();
+        }
       }
     }, estimatedMs);
 
@@ -297,6 +347,7 @@ export class MagicAudioSystem {
       }
       utter.onend = () => {
         if (this.currentSpeechId !== speechId) return;
+        this.activeSpeaker = null;
         if (this.fallbackEndTimer) {
           clearTimeout(this.fallbackEndTimer);
           this.fallbackEndTimer = null;
@@ -314,6 +365,7 @@ export class MagicAudioSystem {
   stopSpeech() {
     this.currentSpeechId = ++this.speechCounter;
     this.activeSpeechKey = null;
+    this.activeSpeaker = null;
     if (this.fallbackEndTimer) {
       clearTimeout(this.fallbackEndTimer);
       this.fallbackEndTimer = null;
