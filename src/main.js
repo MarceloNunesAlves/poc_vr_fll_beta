@@ -48,8 +48,8 @@ const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerH
 
 // Rig do Jogador (permite combinar caminhada física Room-Scale 6DoF + analógico/teclado)
 const playerRig = new THREE.Group();
-// Posição inicial sentado na cadeira no início da sala / banco da cabine (Z = +1.45m, olhando para -Z)
-playerRig.position.set(0, 0, 1.45);
+// Posição inicial sentado na cadeira no MEIO da sala / tapete vermelho (X = 0, Z = 0, olhando para -Z)
+playerRig.position.set(0, 0, 0);
 scene.add(playerRig);
 camera.position.set(0, 1.18, 0); // Altura sentado na cadeira
 playerRig.add(camera);
@@ -61,10 +61,12 @@ renderer.xr.enabled = true;
 renderer.xr.setReferenceSpaceType('local-floor');
 container.appendChild(renderer.domElement);
 
-// Constrói a Sala de Escola de Bruxos (4m x 1,5m)
+// Constrói a Sala de Escola de Bruxos 3D (com Tapete Vermelho central de 4m x 1,5m)
 const classroom = createWizardClassroom(scene);
 
-// Personagens 3D: Letícia (no final da sala) e Luigi (no início da sala, perto da mesa da professora)
+// Personagens 3D posicionados aos lados das mesas (fora do tapete vermelho, onde o usuário não pode acessar):
+// - Letícia: na parte de trás da sala, ao lado da mesa das varinhas (X = +1.12m, Z = -1.96m)
+// - Luigi: na parte da frente da sala, ao lado da mesa da professora (X = -1.18m, Z = +1.98m)
 let leticiaChar = null;
 let luigiChar = null;
 
@@ -73,8 +75,8 @@ async function initCharacters() {
     name: 'Letícia',
     imageUrl: '/assets/leticia.jpg',
     glbUrl: '/models/leticia.glb',
-    position: new THREE.Vector3(0.36, 0, -1.55), // Fundo da sala ao lado da mesa de varinhas
-    rotationY: 0,
+    position: new THREE.Vector3(1.12, 0, -1.96), // Parte de trás da sala, ao lado da mesa de varinhas (fora do tapete)
+    rotationY: -0.45,
     height: 1.28,
     accentColor: 0xf5d061
   });
@@ -84,8 +86,8 @@ async function initCharacters() {
     name: 'Luigi',
     imageUrl: '/assets/luigi.jpg',
     glbUrl: '/models/luigi.glb',
-    position: new THREE.Vector3(0.42, 0, 0.58), // Início da sala próximo à mesa da professora
-    rotationY: -0.4,
+    position: new THREE.Vector3(-1.18, 0.08, 1.98), // Parte da frente da sala, ao lado da mesa da professora (fora do tapete)
+    rotationY: 2.6,
     height: 1.34,
     accentColor: 0xffae00
   });
@@ -120,8 +122,9 @@ trainVideoTex.colorSpace = THREE.SRGBColorSpace;
 trainVideoTex.minFilter = THREE.LinearFilter;
 trainVideoTex.magFilter = THREE.LinearFilter;
 
-// Constrói a Cabine de Trem 3D com a janela à esquerda do usuário sentado
+// Constrói a Cabine de Trem 3D com a janela à esquerda do usuário sentado (alinhada ao centro Z = 0)
 const trainCabin = createTrainCabin(scene, trainVideoTex);
+trainCabin.cabinGroup.position.set(0, 0, -1.45);
 
 // Vídeo da Porta (/video/Porta.mp4 - 720x1280 vertical) exibido à frente do usuário na escuridão
 const doorVideoEl = document.createElement('video');
@@ -426,6 +429,12 @@ let prevButtonAPressed = false;
 let prevButtonBPressed = false;
 let lastWandWorldY = null;
 
+// Controle da Cadeira Central: desaparece 10s após o movimento do usuário na sala
+const CHAIR_DISAPPEAR_DELAY = 10.0;
+let chairMoveDetected = false;
+let chairDisappearTimer = 0;
+const chairOriginPos = new THREE.Vector3(0, 0, 0);
+
 function setHUDDialogue(speaker, text) {
   if (!text) {
     dialogueBoxEl.classList.add('hidden');
@@ -500,12 +509,15 @@ function transitionToState(newState) {
       audio.stopAmbientMagic();
       audio.stopSpeech();
 
-      // Reseta estado da sala, varinhas e pena
+      // Reseta estado da sala, cadeira central, varinhas e pena
       hasWand = false;
       spellProgress = 0;
       playerWand.visible = false;
       spellBeamMat.opacity = 0;
       magicParticles.visible = false;
+      chairMoveDetected = false;
+      chairDisappearTimer = 0;
+      classroom.setChairState(true, 1.0);
       classroom.wandsOnTable.forEach((w) => {
         w.visible = true;
         w.userData.isHovered = false;
@@ -513,9 +525,9 @@ function transitionToState(newState) {
       classroom.featherGroup.position.copy(classroom.featherRestPos);
       classroom.featherGroup.rotation.set(0, 0, 0);
 
-      // Jogador sentado no banco da cabine de trem (ou mantém alinhado aos 4 QR Codes físicos se ativos)
+      // Jogador sentado no meio da sala / banco da cabine de trem (X = 0, Z = 0)
       if (!qrFloorAnchor.applyAnchorToRig(playerRig, false)) {
-        playerRig.position.set(0, 0, 1.45);
+        playerRig.position.set(0, 0, 0);
         playerRig.rotation.set(0, 0, 0);
         camera.rotation.set(0, 0, 0);
       }
@@ -610,7 +622,7 @@ function transitionToState(newState) {
     }
 
     case STATE.ROOM_AWAKEN: {
-      phaseLabelEl.textContent = '6/8 • Despertando na Sala de Escola de Bruxos';
+      phaseLabelEl.textContent = '6/8 • Despertando no Meio da Sala de Escola de Bruxos';
       trainCabin.cabinGroup.visible = false;
       doorVideoMesh.visible = false;
       classroom.roomGroup.visible = true;
@@ -618,18 +630,25 @@ function transitionToState(newState) {
       vrBannerMesh.visible = false;
       audio.startAmbientMagic();
 
-      // Posiciona o jogador sentado na cadeira no início da sala (ou mantém a sala travada nos QR Codes do chão)
+      // Garante que a cadeira central esteja visível e posiciona o jogador sentado no meio (X = 0, Z = 0)
+      chairMoveDetected = false;
+      chairDisappearTimer = 0;
+      classroom.setChairState(true, 1.0);
+
       if (!qrFloorAnchor.applyAnchorToRig(playerRig, false)) {
-        playerRig.position.set(0, 0, 1.45);
+        playerRig.position.set(0, 0, 0);
       }
       break;
     }
 
     case STATE.GO_TO_LETICIA: {
-      phaseLabelEl.textContent = '7/8 • Vá até o final da sala falar com a Letícia';
+      phaseLabelEl.textContent = '7/8 • Vá até a parte de trás da sala falar com a Letícia';
       classroom.setRoomBrightness(1.0);
+      const startPos = getPlayerWorldPosition();
+      chairOriginPos.set(startPos.x, 0, startPos.z);
+
       const msg =
-        'Olá! Bem-vindo à nossa Escola de Magia! Venha andando até aqui no final da sala para escolher sua varinha!';
+        'Olá! Bem-vindo à nossa Escola de Magia! Venha andando pelo tapete vermelho até aqui na parte de trás da sala para escolher sua varinha!';
       speakCharacterDialogue('Letícia', msg, 'leticia_1');
       break;
     }
@@ -643,9 +662,13 @@ function transitionToState(newState) {
     }
 
     case STATE.GO_TO_LUIGI: {
-      phaseLabelEl.textContent = '8/8 • Volte ao início da sala (Mesa da Professora com o Luigi)';
+      phaseLabelEl.textContent = '8/8 • Vá até a frente da sala (Mesa da Professora com o Luigi)';
+      // No modo Desktop (PC/Mac), vira suavemente o olhar para a frente da sala (+Z) onde estão a Mesa da Professora e o Luigi
+      if (!renderer.xr.isPresenting) {
+        playerRig.rotation.y = Math.PI;
+      }
       const msg =
-        'A varinha escolheu você! Agora volte até o início da sala, perto da mesa da professora, onde o Luigi vai te ajudar a fazer a magia!';
+        'A varinha escolheu você! Agora vá pelo tapete vermelho até a parte da frente da sala, na mesa da professora, onde o Luigi vai te ajudar a fazer a magia!';
       speakCharacterDialogue('Letícia', msg, 'leticia_3');
       break;
     }
@@ -701,11 +724,13 @@ function handlePrimaryActionButtonA() {
   }
 
   if (currentState === STATE.GO_TO_LETICIA) {
-    // Se a pessoa apertar A enquanto caminha ou se preferir avançar com o botão até a Letícia:
+    // Se a pessoa apertar A enquanto caminha ou se preferir avançar com o botão até a Letícia na parte de trás da sala:
+    chairMoveDetected = true;
     const playerPos = getPlayerWorldPosition();
-    if (playerPos.z > -0.6) {
-      // Dá um passo suave em direção ao fundo da sala para ajudar quem está sentado
-      playerRig.position.z = Math.max(-0.85, playerRig.position.z - 0.85);
+    if (playerPos.z > -1.15) {
+      // Dá um passo suave pelo tapete vermelho em direção à mesa de trás (-Z)
+      playerRig.position.z = Math.max(-1.45, playerRig.position.z - 0.75);
+      clampPlayerInsideClassroom();
     } else {
       transitionToState(STATE.SELECT_WAND);
     }
@@ -718,9 +743,11 @@ function handlePrimaryActionButtonA() {
   }
 
   if (currentState === STATE.GO_TO_LUIGI) {
+    chairMoveDetected = true;
     const playerPos = getPlayerWorldPosition();
-    if (playerPos.z < 0.5) {
-      playerRig.position.z = Math.min(1.25, playerRig.position.z + 0.85);
+    if (playerPos.z < 1.10) {
+      playerRig.position.z = Math.min(1.45, playerRig.position.z + 0.85);
+      clampPlayerInsideClassroom();
     } else {
       transitionToState(STATE.CAST_SPELL);
     }
@@ -954,7 +981,7 @@ function updateQrStatusBadge() {
 
 function recenterChairPosition() {
   if (!qrFloorAnchor.applyAnchorToRig(playerRig, false)) {
-    playerRig.position.set(0, 0, 1.45);
+    playerRig.position.set(0, 0, 0);
     playerRig.rotation.set(0, 0, 0);
   }
 }
@@ -1173,10 +1200,23 @@ function pollQuest3Gamepads(dt) {
   return { holdingAction: holdingTriggerOrA };
 }
 
-// Mantém o rig dentro dos limites seguros de 4,0m x 1,5m da sala
+// Mantém o usuário estritamente dentro do Tapete Vermelho central (1,5m de largura x 4,0m de comprimento)
 function clampPlayerInsideClassroom() {
-  playerRig.position.x = THREE.MathUtils.clamp(playerRig.position.x, -0.72, 0.72);
-  playerRig.position.z = THREE.MathUtils.clamp(playerRig.position.z, -1.85, 1.85);
+  const maxX = 0.68;
+  const maxZ = 1.82;
+  playerRig.position.x = THREE.MathUtils.clamp(playerRig.position.x, -maxX, maxX);
+  playerRig.position.z = THREE.MathUtils.clamp(playerRig.position.z, -maxZ, maxZ);
+
+  // Caso o usuário caminhe fisicamente em 6DoF no VR além das bordas do tapete vermelho,
+  // corrige suavemente o rig para que ele nunca atravesse as carteiras laterais nem saia do tapete
+  if (renderer.xr.isPresenting) {
+    playerRig.updateWorldMatrix(true, false);
+    camera.getWorldPosition(tempVecA);
+    if (tempVecA.x < -maxX) playerRig.position.x += -maxX - tempVecA.x;
+    if (tempVecA.x > maxX) playerRig.position.x += maxX - tempVecA.x;
+    if (tempVecA.z < -maxZ) playerRig.position.z += -maxZ - tempVecA.z;
+    if (tempVecA.z > maxZ) playerRig.position.z += maxZ - tempVecA.z;
+  }
 }
 
 // Locomoção pelo Teclado no Mac/PC (W A S D ou Setas)
@@ -1259,11 +1299,42 @@ renderer.setAnimationLoop((timestamp, frame) => {
   const { holdingAction } = pollQuest3Gamepads(dt);
   updateDesktopMovement(dt);
 
+  // Nas fases dentro da Sala de Aula, restringe o andar apenas ao Tapete Vermelho central
+  // e controla o desaparecimento da cadeira central 10s após o movimento do usuário!
+  const isClassroomActive =
+    currentState === STATE.GO_TO_LETICIA ||
+    currentState === STATE.SELECT_WAND ||
+    currentState === STATE.GO_TO_LUIGI ||
+    currentState === STATE.CAST_SPELL ||
+    currentState === STATE.CELEBRATION;
+
+  if (isClassroomActive) {
+    clampPlayerInsideClassroom();
+  }
+
   // Mantém a varinha equipada sempre seguindo o controle ativo no VR (ou a mão no Desktop)
   syncPlayerWandToController();
 
   const playerPos = getPlayerWorldPosition();
   const wandTipPos = getWandTipWorldPosition();
+
+  if (isClassroomActive && classroom.playerChair.visible) {
+    if (!chairMoveDetected) {
+      const movedDist = Math.hypot(playerPos.x - chairOriginPos.x, playerPos.z - chairOriginPos.z);
+      if (movedDist > 0.08) {
+        chairMoveDetected = true;
+        chairDisappearTimer = 0;
+      }
+    } else {
+      chairDisappearTimer += dt;
+      if (chairDisappearTimer >= CHAIR_DISAPPEAR_DELAY) {
+        classroom.setChairState(false, 0.0);
+      } else if (chairDisappearTimer > CHAIR_DISAPPEAR_DELAY - 1.5) {
+        const fade = 1.0 - (chairDisappearTimer - (CHAIR_DISAPPEAR_DELAY - 1.5)) / 1.5;
+        classroom.setChairState(true, fade);
+      }
+    }
+  }
 
   // Atualiza a Cabine de Trem 3D quando visível
   trainCabin.update(elapsed);
@@ -1359,8 +1430,8 @@ renderer.setAnimationLoop((timestamp, frame) => {
     }
 
     case STATE.GO_TO_LETICIA: {
-      // Verifica se o usuário chegou perto do final da sala onde está a Letícia (Z <= -0.55m)
-      if (playerPos.z <= -0.55) {
+      // Verifica se o usuário chegou na parte de trás da sala perto da mesa de varinhas e da Letícia (Z <= -1.15m)
+      if (playerPos.z <= -1.15) {
         transitionToState(STATE.SELECT_WAND);
       }
       break;
@@ -1378,8 +1449,8 @@ renderer.setAnimationLoop((timestamp, frame) => {
 
     case STATE.GO_TO_LUIGI: {
       updateMagicParticles(elapsed, wandTipPos, 0.14);
-      // Verifica se o usuário voltou para o início da sala perto da mesa da professora e do Luigi (Z >= +0.15m)
-      if (playerPos.z >= 0.15) {
+      // Verifica se o usuário chegou na parte da frente da sala perto da mesa da professora e do Luigi (Z >= +1.10m)
+      if (playerPos.z >= 1.10) {
         transitionToState(STATE.CAST_SPELL);
       }
       break;

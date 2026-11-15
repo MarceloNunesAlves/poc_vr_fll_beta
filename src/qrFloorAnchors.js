@@ -238,7 +238,7 @@ export class FloorQrAnchorSystem {
     this.isAnchored = false;
     this.trackedBitmaps = [];
     this.detectedCorners = new Map(); // index (0..3) -> { x, y, z, fx, fz, lastSeenTime }
-    this.computedRigPosition = new THREE.Vector3(0, 0, 1.45);
+    this.computedRigPosition = new THREE.Vector3(0, 0, 0);
     this.computedRigRotationY = 0;
 
     this._tempPos = new THREE.Vector3();
