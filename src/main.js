@@ -4,6 +4,7 @@ import { createTrainCabin } from './trainCabin.js';
 import { createWizardCharacter } from './characters.js';
 import { MagicAudioSystem } from './audio.js';
 import { FloorQrAnchorSystem } from './qrFloorAnchors.js';
+import { createLeatherGlove } from './leatherGlove.js';
 
 // Estados da Experiência
 const STATE = {
@@ -295,32 +296,33 @@ camera.add(blackoutSphere);
 // CONTROLES DO META QUEST 3 + VARINHA NA MÃO + PARTÍCULAS MÁGICAS
 // ============================================================================
 // Importante: no WebXR do Three.js, getController(0) recebe o 1º controle conectado
-// e getController(1) recebe o 2º. Por isso detectamos dinamicamente a mão ativa!
+// e getController(1) recebe o 2º. A mão direita é identificada pelo handedness.
 const controller0 = renderer.xr.getController(0);
 const controller1 = renderer.xr.getController(1);
 playerRig.add(controller0, controller1);
 
 const xrControllers = [controller0, controller1];
-let preferredWandController = null;
 
-// Mão virtual / Varinha para modo Desktop e modo VR
+// O centro da empunhadura fica no cabo, a 5,5 cm da origem da varinha.
+const wandGripZ = 0.055;
+const xrWandOffset = new THREE.Vector3(0, -0.008, -0.04);
+const desktopHandRestY = -0.22;
 const handHolder = new THREE.Group();
-// No modo desktop fica visível no canto inferior direito da visão
 camera.add(handHolder);
-handHolder.position.set(0.24, -0.22, -0.48);
+handHolder.position.set(0.24, desktopHandRestY, -0.48);
+const desktopGlove = createLeatherGlove();
+desktopGlove.group.position.z = wandGripZ;
+desktopGlove.group.visible = false;
+handHolder.add(desktopGlove.group);
 
-// Indicador simples das mãos do Quest antes de pegar a varinha
-const controllerVisual0 = new THREE.Mesh(
-  new THREE.SphereGeometry(0.028, 16, 16),
-  new THREE.MeshBasicMaterial({ color: 0xf5d061, wireframe: true })
-);
-controller0.add(controllerVisual0);
-
-const controllerVisual1 = new THREE.Mesh(
-  new THREE.SphereGeometry(0.028, 16, 16),
-  new THREE.MeshBasicMaterial({ color: 0xf5d061, wireframe: true })
-);
-controller1.add(controllerVisual1);
+const xrGloves = xrControllers.map((controller) => {
+  const glove = createLeatherGlove();
+  glove.group.position.copy(xrWandOffset);
+  glove.group.position.z += wandGripZ;
+  glove.group.visible = false;
+  controller.add(glove.group);
+  return glove;
+});
 
 xrControllers.forEach((ctrl, idx) => {
   ctrl.userData.index = idx;
@@ -330,31 +332,22 @@ xrControllers.forEach((ctrl, idx) => {
   ctrl.addEventListener('connected', (e) => {
     ctrl.userData.isConnected = true;
     ctrl.userData.handedness = e.data ? e.data.handedness : null;
-    if (ctrl.userData.handedness === 'right' || !preferredWandController) {
-      preferredWandController = ctrl;
-    }
+    xrGloves[idx].setHandedness(ctrl.userData.handedness);
   });
 
   ctrl.addEventListener('disconnected', () => {
     ctrl.userData.isConnected = false;
     ctrl.userData.handedness = null;
-    if (preferredWandController === ctrl) {
-      preferredWandController = xrControllers.find((c) => c.userData.isConnected) || null;
-    }
   });
 });
 
 function getActiveWandController() {
-  if (preferredWandController && preferredWandController.visible) {
-    return preferredWandController;
-  }
-  const rightCtrl = xrControllers.find((c) => c.visible && c.userData.handedness === 'right');
-  if (rightCtrl) return rightCtrl;
-  const anyVisible = xrControllers.find((c) => c.visible);
-  if (anyVisible) return anyVisible;
-  const anyConnected = xrControllers.find((c) => c.userData.isConnected);
-  if (anyConnected) return anyConnected;
-  return controller0;
+  const right = xrControllers.find((c) => c.userData.isConnected && c.userData.handedness === 'right');
+  if (right?.visible) return right;
+  return xrControllers.find((c) => c.visible && c.userData.isConnected)
+    || right
+    || xrControllers.find((c) => c.userData.isConnected)
+    || controller0;
 }
 
 // Varinha equipada pelo jogador (adicionada diretamente na cena e sincronizada a cada frame
@@ -512,6 +505,7 @@ function transitionToState(newState) {
       // Reseta estado da sala, cadeira central, varinhas e pena
       hasWand = false;
       spellProgress = 0;
+      handHolder.position.y = desktopHandRestY;
       playerWand.visible = false;
       spellBeamMat.opacity = 0;
       magicParticles.visible = false;
@@ -871,38 +865,27 @@ function evaluateWandSelectionOnTable() {
   return { chosen: bestWand, touched: isTouching };
 }
 
-// Sincroniza a varinha equipada diretamente com a pose mundial do controle ativo a cada frame
-function syncPlayerWandToController() {
-  if (!hasWand) {
-    playerWand.visible = false;
-    controllerVisual0.visible = true;
-    controllerVisual1.visible = true;
-    return;
+function syncPlayerHandsAndWand(dt = 0) {
+  const immersive = renderer.xr.isPresenting;
+  const activeCtrl = immersive ? getActiveWandController() : null;
+  desktopGlove.group.visible = !immersive && classroom.roomGroup.visible;
+  desktopGlove.setGrip(!immersive && hasWand, dt);
+  xrControllers.forEach((controller, i) => {
+    const glove = xrGloves[i];
+    glove.group.visible = immersive && controller.userData.isConnected;
+    glove.setGrip(hasWand && activeCtrl === controller, dt);
+  });
+
+  // Mantém a pose da varinha e a origem da mira usadas pelo feitiço.
+  playerWand.visible = hasWand;
+  if (!hasWand) return;
+  const anchor = activeCtrl || handHolder;
+  anchor.getWorldPosition(playerWand.position);
+  anchor.getWorldQuaternion(playerWand.quaternion);
+  if (activeCtrl) {
+    playerWand.position.add(tempVecB.copy(xrWandOffset).applyQuaternion(playerWand.quaternion));
   }
-
-  playerWand.visible = true;
-
-  if (renderer.xr.isPresenting) {
-    const activeCtrl = getActiveWandController();
-    // Oculta a esfera guia na mão que está segurando a varinha para o jogador ver a varinha na mão
-    controllerVisual0.visible = activeCtrl !== controller0;
-    controllerVisual1.visible = activeCtrl !== controller1;
-
-    activeCtrl.updateWorldMatrix(true, false);
-    activeCtrl.getWorldPosition(playerWand.position);
-    activeCtrl.getWorldQuaternion(playerWand.quaternion);
-    // Posiciona o cabo da varinha encaixado na mão/controle apontando para frente (-Z)
-    playerWand.translateZ(-0.04);
-    playerWand.translateY(-0.008);
-    playerWand.updateMatrixWorld(true);
-  } else {
-    controllerVisual0.visible = true;
-    controllerVisual1.visible = true;
-    handHolder.updateWorldMatrix(true, false);
-    handHolder.getWorldPosition(playerWand.position);
-    handHolder.getWorldQuaternion(playerWand.quaternion);
-    playerWand.updateMatrixWorld(true);
-  }
+  playerWand.updateMatrixWorld(true);
 }
 
 function pickupClosestWand(preselectedWand = null) {
@@ -932,7 +915,7 @@ function pickupClosestWand(preselectedWand = null) {
   }
 
   // Posiciona imediatamente a varinha no controle ativo do jogador
-  syncPlayerWandToController();
+  syncPlayerHandsAndWand();
   magicParticles.visible = true;
 
   audio.playWandPickup();
@@ -1045,7 +1028,7 @@ window.addEventListener('pointermove', (e) => {
   // No modo PC, mover o mouse para cima na fase CAST_SPELL ergue a varinha e a pena!
   if (currentState === STATE.CAST_SPELL && dy < -2) {
     spellProgress = Math.min(1.0, spellProgress + Math.abs(dy) * 0.0045);
-    handHolder.position.y = -0.22 + spellProgress * 0.14;
+    handHolder.position.y = desktopHandRestY + spellProgress * 0.14;
     if (spellProgress >= 1.0) {
       transitionToState(STATE.CELEBRATION);
     }
@@ -1064,14 +1047,12 @@ if (btnSkipVideo) {
 btnRecenter.addEventListener('click', () => recenterChairPosition());
 btnReset.addEventListener('click', () => transitionToState(STATE.WELCOME));
 
-// Gatilho e Grip de ambos os Controles do Quest 3 acionam a ação principal e definem a mão ativa!
+// O gatilho e o grip dos dois controles continuam acionando a ação principal.
 xrControllers.forEach((ctrl) => {
   ctrl.addEventListener('selectstart', () => {
-    preferredWandController = ctrl;
     handlePrimaryActionButtonA();
   });
   ctrl.addEventListener('squeezestart', () => {
-    preferredWandController = ctrl;
     if (currentState === STATE.SELECT_WAND || currentState === STATE.CAST_SPELL) {
       handlePrimaryActionButtonA();
     }
@@ -1152,10 +1133,6 @@ function pollQuest3Gamepads(dt) {
     if (btnB) buttonBPressedNow = true;
     if (btnA || triggerPressed || gripPressed) {
       holdingTriggerOrA = true;
-      if (source.handedness) {
-        const matchingCtrl = xrControllers.find((c) => c.userData.handedness === source.handedness && c.visible);
-        if (matchingCtrl) preferredWandController = matchingCtrl;
-      }
     }
 
     // Locomoção Híbrida via Analógico (axes[2] = X, axes[3] = Y)
@@ -1312,8 +1289,7 @@ renderer.setAnimationLoop((timestamp, frame) => {
     clampPlayerInsideClassroom();
   }
 
-  // Mantém a varinha equipada sempre seguindo o controle ativo no VR (ou a mão no Desktop)
-  syncPlayerWandToController();
+  syncPlayerHandsAndWand(dt);
 
   const playerPos = getPlayerWorldPosition();
   const wandTipPos = getWandTipWorldPosition();
