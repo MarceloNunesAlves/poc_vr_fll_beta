@@ -173,29 +173,6 @@ function createSoftEdgeTexture() {
 }
 
 /**
- * Textura original da cadeira central.
- */
-function createPlayerChairTexture() {
-  const canvas = document.createElement('canvas');
-  canvas.width = 256;
-  canvas.height = 256;
-  const ctx = canvas.getContext('2d');
-
-  ctx.fillStyle = '#583118';
-  ctx.fillRect(0, 0, 256, 256);
-  for (let i = 0; i < 48; i++) {
-    ctx.fillStyle = i % 2 === 0 ? 'rgba(22, 10, 4, 0.26)' : 'rgba(115, 68, 32, 0.18)';
-    ctx.fillRect(0, i * 5.3, 256, 2.8);
-  }
-
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.wrapS = THREE.RepeatWrapping;
-  tex.wrapT = THREE.RepeatWrapping;
-  return tex;
-}
-
-/**
  * Desenha o Emblema Heráldico do Leão Dourado (usado no tapete vermelho e nos estandartes)
  */
 function drawGoldenLionCrest(ctx, cx, cy, radius) {
@@ -747,29 +724,42 @@ function createStudentDoubleDeskWithChairs(woodMat, darkWoodMat, chairFaceSign) 
   const deskW = 1.24;
   const deskH = 0.74;
   const deskD = 0.68;
+  const legX = deskW / 2 - 0.07;
+  const legZ = deskD / 2 - 0.07;
 
-  // Tampo e saia da mesa
+  // Tampo e armação sob o tampo.
   const top = new THREE.Mesh(new RoundedBoxGeometry(deskW, 0.05, deskD, 1, 0.018), woodMat);
   top.position.y = deskH;
-  const apron = new THREE.Mesh(new THREE.BoxGeometry(deskW - 0.10, 0.14, deskD - 0.10), darkWoodMat);
-  apron.position.y = deskH - 0.09;
   const rim = new THREE.Mesh(new THREE.BoxGeometry(deskW - 0.03, 0.027, deskD - 0.03), darkWoodMat);
   rim.position.y = deskH - 0.031;
-  const stretcher = new THREE.Mesh(new THREE.BoxGeometry(deskW - 0.16, 0.06, 0.065), darkWoodMat);
-  stretcher.position.y = 0.24;
-  group.add(top, apron, rim, stretcher);
+  group.add(top, rim);
 
-  // 4 Pernas robustas com travessas laterais
-  [
-    [-deskW / 2 + 0.07, -deskD / 2 + 0.07],
-    [deskW / 2 - 0.07, -deskD / 2 + 0.07],
-    [-deskW / 2 + 0.07, deskD / 2 - 0.07],
-    [deskW / 2 - 0.07, deskD / 2 - 0.07]
-  ].forEach(([lx, lz]) => {
-    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.07, deskH, 0.07), woodMat);
-    leg.position.set(lx, deskH / 2, lz);
-    group.add(leg);
-  });
+  const legGeo = new RoundedBoxGeometry(0.07, deskH, 0.07, 1, 0.004);
+  const longApronGeo = new THREE.BoxGeometry(2 * legX, 0.14, 0.045);
+  const sideApronGeo = new THREE.BoxGeometry(0.045, 0.135, 2 * legZ);
+  const sideStretcherGeo = new THREE.BoxGeometry(0.052, 0.055, 2 * legZ);
+  const stretcherY = 0.24;
+  for (const side of [-1, 1]) {
+    const x = side * legX;
+    const z = side * legZ;
+    const longApron = new THREE.Mesh(longApronGeo, darkWoodMat);
+    longApron.position.set(0, deskH - 0.09, z);
+    const sideApron = new THREE.Mesh(sideApronGeo, darkWoodMat);
+    sideApron.position.set(x, deskH - 0.09, 0);
+    const sideStretcher = new THREE.Mesh(sideStretcherGeo, darkWoodMat);
+    sideStretcher.position.set(x, stretcherY, 0);
+    group.add(longApron, sideApron, sideStretcher);
+
+    for (const legDepth of [-legZ, legZ]) {
+      const leg = new THREE.Mesh(legGeo, woodMat);
+      leg.position.set(x, deskH / 2, legDepth);
+      group.add(leg);
+    }
+  }
+  // A travessa central termina nas duas travessas laterais, formando um H.
+  const centerStretcher = new THREE.Mesh(new THREE.BoxGeometry(2 * legX, 0.049, 0.06), darkWoodMat);
+  centerStretcher.position.y = stretcherY;
+  group.add(centerStretcher);
 
   // 2 Livros sobre a carteira (um vermelho carmesim e um verde/marrom escuro como nas fotos 1 e 3)
   const paperMat = new THREE.MeshStandardMaterial({ color: 0xc4ad83, roughness: 0.95 });
@@ -806,40 +796,84 @@ function createStudentDoubleDeskWithChairs(woodMat, darkWoodMat, chairFaceSign) 
     group.add(pot, quill);
   });
 
-  // 2 Cadeiras de madeira atrás da carteira
+  // Os montantes do encosto também são as pernas traseiras da cadeira.
+  const seatGeo = new RoundedBoxGeometry(0.42, 0.04, 0.40, 1, 0.007);
+  const uprightGeo = new RoundedBoxGeometry(0.047, 0.88, 0.05, 1, 0.004);
+  const frontLegGeo = new RoundedBoxGeometry(0.044, 0.44, 0.046, 1, 0.004);
+  const backRailGeo = new RoundedBoxGeometry(0.392, 0.049, 0.044, 1, 0.004);
+  const spindleGeo = new THREE.BoxGeometry(0.029, 0.25, 0.032);
+  const rearZ = 0.16 * chairFaceSign;
   [-0.31, 0.31].forEach((cx) => {
     const chair = new THREE.Group();
-    const seat = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.04, 0.40), woodMat);
+    const seat = new THREE.Mesh(seatGeo, woodMat);
     seat.position.y = 0.44;
     chair.add(seat);
     for (const height of [0.59, 0.84]) {
-      const backRail = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.049, 0.047), woodMat);
-      backRail.position.set(0, height, 0.18 * chairFaceSign);
+      const backRail = new THREE.Mesh(backRailGeo, woodMat);
+      backRail.position.set(0, height, rearZ);
       chair.add(backRail);
     }
-    const spindleGeo = new THREE.BoxGeometry(0.034, 0.29, 0.036);
-    for (const x of [-0.18, -0.09, 0, 0.09, 0.18]) {
+    for (const x of [-0.09, 0, 0.09]) {
       const spindle = new THREE.Mesh(spindleGeo, woodMat);
-      spindle.position.set(x, 0.71, 0.18 * chairFaceSign);
+      spindle.position.set(x, 0.715, rearZ);
       chair.add(spindle);
     }
-
-    [
-      [-0.17, -0.16],
-      [0.17, -0.16],
-      [-0.17, 0.16],
-      [0.17, 0.16]
-    ].forEach(([clx, clz]) => {
-      const cLeg = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.44, 0.04), darkWoodMat);
-      cLeg.position.set(clx, 0.22, clz);
-      chair.add(cLeg);
-    });
+    for (const x of [-0.174, 0.174]) {
+      const upright = new THREE.Mesh(uprightGeo, woodMat);
+      upright.position.set(x, 0.44, rearZ);
+      const frontLeg = new THREE.Mesh(frontLegGeo, darkWoodMat);
+      frontLeg.position.set(x, 0.22, -rearZ);
+      chair.add(upright, frontLeg);
+    }
 
     chair.position.set(cx, 0, 0.42 * chairFaceSign);
     group.add(chair);
   });
 
   return batchStaticMeshes(group);
+}
+
+function createTeacherChair(woodMat, darkWoodMat) {
+  const chair = new THREE.Group();
+  const seatY = 0.47;
+  const backZ = 0.192;
+  const seat = new THREE.Mesh(new RoundedBoxGeometry(0.56, 0.054, 0.49, 1, 0.009), woodMat);
+  seat.position.y = seatY;
+  const seatFrame = new THREE.Mesh(new THREE.BoxGeometry(0.51, 0.083, 0.44), darkWoodMat);
+  seatFrame.position.y = seatY - 0.05;
+  chair.add(seat, seatFrame);
+
+  // O arco faz parte da mesma tábua do encosto e se apoia nos montantes traseiros.
+  const profile = new THREE.Shape();
+  profile.moveTo(-0.237, 0.45);
+  profile.lineTo(0.237, 0.45);
+  profile.lineTo(0.237, 1.19);
+  profile.bezierCurveTo(0.237, 1.31, 0.095, 1.35, 0, 1.46);
+  profile.bezierCurveTo(-0.095, 1.35, -0.237, 1.31, -0.237, 1.19);
+  profile.closePath();
+  const back = new THREE.Mesh(new THREE.ExtrudeGeometry(profile, {
+    depth: 0.048,
+    bevelSize: 0.009,
+    bevelThickness: 0.008,
+    bevelSegments: 2,
+    curveSegments: 12
+  }), woodMat);
+  back.position.z = backZ - 0.024;
+  const carving = createCarvedPanel(0.33, 0.68, woodMat, darkWoodMat);
+  carving.rotation.y = Math.PI;
+  carving.position.set(0, 0.57, back.position.z - 0.0045);
+  chair.add(back, carving);
+
+  const rearPostGeo = new RoundedBoxGeometry(0.066, 1.29, 0.068, 1, 0.007);
+  const frontLegGeo = new RoundedBoxGeometry(0.061, seatY, 0.06, 1, 0.005);
+  for (const x of [-0.244, 0.244]) {
+    const rearPost = new THREE.Mesh(rearPostGeo, darkWoodMat);
+    rearPost.position.set(x, 0.645, backZ);
+    const frontLeg = new THREE.Mesh(frontLegGeo, woodMat);
+    frontLeg.position.set(x, seatY / 2, -backZ);
+    chair.add(rearPost, frontLeg);
+  }
+  return batchStaticMeshes(chair);
 }
 
 /**
@@ -1352,22 +1386,31 @@ export function createWizardClassroom(scene) {
   // ============================================================================
   const playerChair = new THREE.Group();
   const chairWoodMat = new THREE.MeshStandardMaterial({
-    map: createPlayerChairTexture(),
+    map: woodTex,
     roughness: 0.62,
-    metalness: 0.06,
     transparent: true
   });
 
   const chairSeat = new THREE.Mesh(new THREE.BoxGeometry(0.50, 0.05, 0.48), chairWoodMat);
   chairSeat.position.y = 0.46;
-  const chairBack = new THREE.Mesh(new THREE.BoxGeometry(0.50, 0.58, 0.05), chairWoodMat);
-  chairBack.position.set(0, 0.76, 0.22);
-  // Topo em arco gótico do encosto da cadeira (como na Foto 1)
-  const chairCrest = new THREE.Mesh(new THREE.ConeGeometry(0.26, 0.14, 4), chairWoodMat);
-  chairCrest.rotation.y = Math.PI / 4;
-  chairCrest.scale.set(1.35, 1, 0.22);
-  chairCrest.position.set(0, 1.11, 0.22);
-  playerChair.add(chairSeat, chairBack, chairCrest);
+
+  // O topo arredondado faz parte da tábua do encosto.
+  const backProfile = new THREE.Shape();
+  backProfile.moveTo(-0.242, 0.47);
+  backProfile.lineTo(0.242, 0.47);
+  backProfile.lineTo(0.242, 1.025);
+  backProfile.bezierCurveTo(0.242, 1.10, 0.07, 1.172, 0, 1.172);
+  backProfile.bezierCurveTo(-0.07, 1.172, -0.242, 1.10, -0.242, 1.025);
+  backProfile.closePath();
+  const chairBack = new THREE.Mesh(new THREE.ExtrudeGeometry(backProfile, {
+    depth: 0.038,
+    bevelSize: 0.008,
+    bevelThickness: 0.006,
+    bevelSegments: 2,
+    curveSegments: 12
+  }), chairWoodMat);
+  chairBack.position.z = 0.201;
+  playerChair.add(chairSeat, chairBack);
 
   [
     [-0.21, -0.20],
@@ -1700,18 +1743,10 @@ export function createWizardClassroom(scene) {
   roomGroup.add(featherGroup);
 
   // Cadeira Alta da Professora atrás da Mesa da Professora (Fotos 1 e 3)
-  const teacherChair = new THREE.Group();
-  const tcSeat = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.06, 0.54), woodMat);
-  tcSeat.position.y = 0.48;
-  const tcBack = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.95, 0.06), darkWoodMat);
-  tcBack.position.set(0, 0.96, 0.24);
-  const tcCrown = new THREE.Mesh(new THREE.ConeGeometry(0.32, 0.20, 4), woodMat);
-  tcCrown.rotation.y = Math.PI / 4;
-  tcCrown.scale.set(1.3, 1, 0.22);
-  tcCrown.position.set(0, 1.52, 0.24);
-  teacherChair.add(tcSeat, tcBack, tcCrown);
-  teacherChair.position.set(0, 0.16, 2.86);
+  const teacherChair = createTeacherChair(woodMat, darkWoodMat);
+  teacherChair.position.set(0, 0.16, 2.89);
   roomGroup.add(teacherChair);
+  addFloorShadow(0, teacherChair.position.z, 0.70, 0.62, 0.164);
 
   // Janela Gótica atrás da Cadeira da Professora na parede frontal (Foto 3)
   const frontWindow = createGothicWindow(1.62, 2.28, windowMat, stoneDetailMat, traceryMat);
