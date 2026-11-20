@@ -1,5 +1,9 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import {
+  batchStaticMeshes, createCarvedPanel, createGothicDoor, createGothicWindow, createVaultedCeiling
+} from './classroomArchitecture.js';
 import { FLOOR_QR_CORNERS, QR_PHYSICAL_SIZE_METERS, generateCornerQrCanvas } from './qrFloorAnchors.js';
 
 const wandGltfLoader = new GLTFLoader();
@@ -145,95 +149,39 @@ function loadNormalizedWandGlb(glbUrl) {
   return promise.then((template) => template.clone(true));
 }
 
-/**
- * Textura de blocos de pedra arenito/calcário quente (como nas 4 imagens de referência)
- */
-function createWarmSandstoneWallTexture() {
+function loadClassroomTexture(loader, filename, repeatX = 1, repeatY = 1, onLoad) {
+  const texture = loader.load(`/assets/classroom/${filename}`, onLoad);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+  texture.repeat.set(repeatX, repeatY);
+  texture.anisotropy = 4;
+  return texture;
+}
+
+function createSoftEdgeTexture() {
   const canvas = document.createElement('canvas');
-  canvas.width = 512;
-  canvas.height = 512;
+  canvas.width = canvas.height = 128;
   const ctx = canvas.getContext('2d');
-
-  ctx.fillStyle = '#6f5e4c';
-  ctx.fillRect(0, 0, 512, 512);
-
-  const rows = 8;
-  const cols = 4;
-  const bh = 512 / rows;
-  const bw = 512 / cols;
-
-  for (let r = 0; r < rows; r++) {
-    const offset = (r % 2) * (bw / 2);
-    for (let c = -1; c <= cols; c++) {
-      const x = c * bw + offset;
-      const y = r * bh;
-      const base = 132 + Math.floor(Math.random() * 24);
-      const red = base + 18;
-      const green = base + 4;
-      const blue = base - 16;
-      ctx.fillStyle = `rgb(${red}, ${green}, ${blue})`;
-      ctx.fillRect(x + 3, y + 3, bw - 6, bh - 6);
-
-      // Leve variação de granulação interna na pedra
-      ctx.fillStyle = 'rgba(255, 238, 210, 0.06)';
-      ctx.fillRect(x + 6, y + 6, bw - 14, bh * 0.35);
-    }
-  }
-
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.wrapS = THREE.RepeatWrapping;
-  tex.wrapT = THREE.RepeatWrapping;
-  tex.repeat.set(5, 3);
-  return tex;
+  const gradient = ctx.createRadialGradient(64, 64, 4, 64, 64, 64);
+  gradient.addColorStop(0, 'rgba(255,255,255,1)');
+  gradient.addColorStop(0.35, 'rgba(255,255,255,0.47)');
+  gradient.addColorStop(0.72, 'rgba(255,255,255,0.12)');
+  gradient.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, 128, 128);
+  return new THREE.CanvasTexture(canvas);
 }
 
 /**
- * Textura de lajes quadradas de pedra para o piso do salão (como na vista superior da foto 3)
+ * Textura original da cadeira central.
  */
-function createStoneFloorTileTexture() {
-  const canvas = document.createElement('canvas');
-  canvas.width = 512;
-  canvas.height = 512;
-  const ctx = canvas.getContext('2d');
-
-  ctx.fillStyle = '#52473c';
-  ctx.fillRect(0, 0, 512, 512);
-
-  const grid = 4;
-  const step = 512 / grid;
-  for (let r = 0; r < grid; r++) {
-    for (let c = 0; c < grid; c++) {
-      const x = c * step;
-      const y = r * step;
-      const v = 108 + ((r * 3 + c * 5) % 18);
-      ctx.fillStyle = `rgb(${v + 12}, ${v + 4}, ${v - 6})`;
-      ctx.fillRect(x + 3, y + 3, step - 6, step - 6);
-
-      ctx.strokeStyle = 'rgba(40, 32, 24, 0.35)';
-      ctx.lineWidth = 2;
-      ctx.strokeRect(x + 4, y + 4, step - 8, step - 8);
-    }
-  }
-
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.wrapS = THREE.RepeatWrapping;
-  tex.wrapT = THREE.RepeatWrapping;
-  tex.repeat.set(7, 9);
-  return tex;
-}
-
-/**
- * Textura de madeira nobre envernizada para mesas, estantes, vigas e portas
- */
-function createWoodTexture(dark = false) {
+function createPlayerChairTexture() {
   const canvas = document.createElement('canvas');
   canvas.width = 256;
   canvas.height = 256;
   const ctx = canvas.getContext('2d');
 
-  ctx.fillStyle = dark ? '#341d10' : '#583118';
+  ctx.fillStyle = '#583118';
   ctx.fillRect(0, 0, 256, 256);
   for (let i = 0; i < 48; i++) {
     ctx.fillStyle = i % 2 === 0 ? 'rgba(22, 10, 4, 0.26)' : 'rgba(115, 68, 32, 0.18)';
@@ -257,67 +205,22 @@ function drawGoldenLionCrest(ctx, cx, cy, radius) {
   ctx.scale(s, s);
 
   ctx.fillStyle = '#eab839';
-  ctx.strokeStyle = '#9c6d14';
-  ctx.lineWidth = 3;
-
-  // Corpo rampante do leão heráldico
-  ctx.beginPath();
-  // Cabeça e juba
-  ctx.arc(-8, -52, 24, 0, Math.PI * 2);
-  // Tronco
-  ctx.ellipse(2, -5, 22, 38, -0.2, 0, Math.PI * 2);
-  // Quadril
-  ctx.arc(12, 30, 18, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Pata dianteira esquerda erguida
-  ctx.lineWidth = 13;
+  // O leão rampante e a cauda recortada funcionam tanto no tecido quanto no escudo.
+  ctx.fill(new Path2D(
+    'M-11 -36 C-2 -54 -6 -70 -18 -72 L-31 -86 L-36 -74 L-47 -71 L-51 -64 L-68 -60 L-65 -51 ' +
+    'L-48 -50 L-47 -46 L-64 -43 L-59 -36 L-43 -37 L-32 -30 L-41 -21 L-61 -32 L-73 -44 ' +
+    'L-79 -43 L-79 -31 L-87 -34 L-85 -24 L-64 -15 L-38 -8 L-29 -11 L-33 2 L-51 8 L-65 0 ' +
+    'L-72 1 L-69 10 L-76 10 L-69 21 L-53 22 L-29 15 L-9 19 L-10 29 L-35 39 L-40 59 ' +
+    'L-61 63 L-68 72 L-40 74 L-25 65 L-24 53 L-2 49 L3 58 L-3 74 L-20 80 L-23 90 ' +
+    'L6 89 L16 80 L20 58 L29 45 C46 28 30 13 16 3 C10 -4 4 -16 2 -33 L-5 -43 Z'
+  ));
+  ctx.lineWidth = 7;
   ctx.lineCap = 'round';
   ctx.strokeStyle = '#eab839';
-  ctx.beginPath();
-  ctx.moveTo(-12, -26);
-  ctx.lineTo(-48, -52);
-  ctx.lineTo(-58, -42);
-  ctx.stroke();
-
-  // Pata dianteira direita
-  ctx.beginPath();
-  ctx.moveTo(-4, -12);
-  ctx.lineTo(-44, -16);
-  ctx.stroke();
-
-  // Pata traseira esquerda
-  ctx.beginPath();
-  ctx.moveTo(4, 34);
-  ctx.lineTo(-26, 68);
-  ctx.lineTo(-38, 68);
-  ctx.stroke();
-
-  // Pata traseira direita
-  ctx.beginPath();
-  ctx.moveTo(18, 36);
-  ctx.lineTo(36, 72);
-  ctx.lineTo(24, 74);
-  ctx.stroke();
-
-  // Cauda real em S com tufo na ponta
-  ctx.lineWidth = 8;
-  ctx.beginPath();
-  ctx.moveTo(22, 22);
-  ctx.bezierCurveTo(66, 10, 62, -48, 30, -64);
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.arc(28, -66, 11, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Detalhes da juba/coroa
-  ctx.fillStyle = '#ffd966';
-  ctx.beginPath();
-  ctx.moveTo(-22, -68);
-  ctx.lineTo(-8, -82);
-  ctx.lineTo(6, -68);
-  ctx.closePath();
-  ctx.fill();
+  ctx.stroke(new Path2D('M24 43 C70 50 92 10 65 -8 C48 -20 36 -5 42 8 C48 21 76 17 85 -5 C95 -26 79 -57 63 -66'));
+  ctx.fill(new Path2D('M63 -66 C47 -65 41 -77 45 -87 C51 -80 62 -82 65 -74 L68 -81 C75 -75 71 -64 63 -66 Z'));
+  ctx.fillStyle = '#8e5519';
+  ctx.fill(new Path2D('M-48 -64 L-39 -66 L-41 -59 Z M-24 -58 Q-17 -41 -29 -30 L-20 -32 Q-10 -51 -24 -58 Z'));
 
   ctx.restore();
 }
@@ -339,12 +242,6 @@ function createRoyalRedCarpetTexture() {
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, 512, 1024);
 
-  // Trama sutil do tecido
-  ctx.fillStyle = 'rgba(40, 0, 5, 0.12)';
-  for (let y = 0; y < 1024; y += 8) {
-    ctx.fillRect(0, y, 512, 3);
-  }
-
   // Borda dupla dourada em todo o perímetro do tapete
   ctx.strokeStyle = '#e5b842';
   ctx.lineWidth = 14;
@@ -359,8 +256,21 @@ function createRoyalRedCarpetTexture() {
     drawGoldenLionCrest(ctx, 256, cy, 92);
   });
 
+  // A trama atravessa o campo vermelho e o bordado. O ruído é determinístico.
+  const carpetPixels = ctx.getImageData(0, 0, 512, 1024);
+  for (let y = 0; y < 1024; y++) {
+    for (let x = 0; x < 512; x++) {
+      const fiber = ((x * 17 + y * 11 + x * y * 7) % 13) - 6 + (y % 3 === 0 ? 4 : -2);
+      const p = (y * 512 + x) * 4;
+      carpetPixels.data[p] += fiber;
+      carpetPixels.data[p + 1] += fiber * 0.65;
+      carpetPixels.data[p + 2] += fiber * 0.55;
+    }
+  }
+  ctx.putImageData(carpetPixels, 0, 0);
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
   return tex;
 }
 
@@ -374,46 +284,51 @@ function createGothicWindowTexture() {
   const ctx = canvas.getContext('2d');
 
   const sky = ctx.createLinearGradient(0, 0, 0, 512);
-  sky.addColorStop(0, '#1e3f7a');
-  sky.addColorStop(0.6, '#2b58a8');
-  sky.addColorStop(1, '#162c54');
+  sky.addColorStop(0, '#182956');
+  sky.addColorStop(0.45, '#345eaf');
+  sky.addColorStop(0.83, '#577ab6');
+  sky.addColorStop(1, '#233d68');
   ctx.fillStyle = sky;
   ctx.fillRect(0, 0, 256, 512);
 
-  // Silhuetas de pinheiros da floresta lá fora (como nas fotos 2 e 4)
-  ctx.fillStyle = 'rgba(10, 20, 38, 0.65)';
-  [55, 130, 205].forEach((tx, idx) => {
-    for (let layer = 0; layer < 5; layer++) {
-      const topY = 210 + idx * 18 + layer * 45;
+  // Camadas de pinheiros e a trama de chumbo vista através do vidro azul.
+  for (let layer = 0; layer < 2; layer++) {
+    ctx.fillStyle = layer === 0 ? '#294367' : '#172b49';
+    for (let i = 0; i < 9; i++) {
+      const x = i * 34 - 10 + layer * 13;
+      const treeTop = 277 + (i * i * 17 + layer * 19) % 116;
       ctx.beginPath();
-      ctx.moveTo(tx, topY);
-      ctx.lineTo(tx - 38 - layer * 6, topY + 68);
-      ctx.lineTo(tx + 38 + layer * 6, topY + 68);
+      ctx.moveTo(x, treeTop);
+      for (let branch = 1; branch <= 5; branch++) {
+        const y = treeTop + branch * 19;
+        const spread = 4 + branch * 4;
+        ctx.lineTo(x - spread, y + 10);
+        ctx.lineTo(x - spread * 0.50, y + 8);
+      }
+      ctx.lineTo(x - 3, 512);
+      ctx.lineTo(x + 3, 512);
+      for (let branch = 5; branch >= 1; branch--) {
+        const y = treeTop + branch * 19;
+        const spread = 4 + branch * 4;
+        ctx.lineTo(x + spread * 0.50, y + 8);
+        ctx.lineTo(x + spread, y + 10);
+      }
       ctx.closePath();
       ctx.fill();
     }
-  });
+  }
 
-  // Grade de losangos de chumbo (leaded glass)
-  ctx.strokeStyle = 'rgba(20, 24, 32, 0.78)';
-  ctx.lineWidth = 3;
-  const step = 32;
+  ctx.lineWidth = 2.5;
+  ctx.strokeStyle = '#243047';
+  const step = 54;
   for (let y = -256; y < 512 + 256; y += step) {
     ctx.beginPath();
     ctx.moveTo(0, y);
     ctx.lineTo(256, y + 256);
-    ctx.stroke();
-
-    ctx.beginPath();
     ctx.moveTo(256, y);
     ctx.lineTo(0, y + 256);
     ctx.stroke();
   }
-
-  // Moldura de pedra em arco ogival
-  ctx.strokeStyle = '#5c4d3c';
-  ctx.lineWidth = 14;
-  ctx.strokeRect(4, 4, 248, 504);
 
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
@@ -680,7 +595,7 @@ export function createWandMesh(woodColor = 0x5c3317, glowColor = 0xffd700, glbUr
 /**
  * Constrói uma Estante de Livros Gótica de Madeira cheia de livros coloridos, globo astrológico, caveira/ampulheta e velas no topo (Fotos 1, 3 e 4)
  */
-function createBookcaseWithProps(woodMat, darkWoodMat, brassMat, candleMat, flameMat, side = 'left', index = 0) {
+function createBookcaseWithProps(woodMat, darkWoodMat, bookMat, brassMat, candleMat, flameMat, side, index) {
   const group = new THREE.Group();
   const width = 1.45;
   const height = 2.65;
@@ -701,7 +616,8 @@ function createBookcaseWithProps(woodMat, darkWoodMat, brassMat, candleMat, flam
 
   // 5 Prateleiras horizontais
   const shelfHeights = [0.08, 0.60, 1.12, 1.64, 2.14];
-  const bookPalette = [0x6b1d1d, 0x1e4628, 0x22385c, 0x5c3c1e, 0x4b244a, 0x7a5624];
+  const bookPalette = [0x934137, 0x4b6258, 0x465b73, 0x846142, 0x64434a, 0x916a39];
+  const volumes = [];
 
   shelfHeights.forEach((sy, sIdx) => {
     const shelf = new THREE.Mesh(new THREE.BoxGeometry(width - 0.06, 0.04, depth - 0.02), woodMat);
@@ -766,16 +682,23 @@ function createBookcaseWithProps(woodMat, darkWoodMat, brassMat, candleMat, flam
       const bh = 0.30 + ((bIdx * 5 + sIdx) % 4) * 0.03;
       const bd = 0.24;
       const bColor = bookPalette[(bIdx + sIdx * 2 + index) % bookPalette.length];
-      const book = new THREE.Mesh(
-        new THREE.BoxGeometry(bw, bh, bd),
-        new THREE.MeshStandardMaterial({ color: bColor, roughness: 0.75 })
-      );
-      book.position.set(curX + bw / 2, sy + 0.02 + bh / 2, 0.02);
-      group.add(book);
+      volumes.push({ x: curX + bw / 2, y: sy + 0.02 + bh / 2, bw, bh, bd, bColor });
       curX += bw + 0.008;
       bIdx++;
     }
   });
+
+  const books = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), bookMat, volumes.length);
+  const transform = new THREE.Object3D();
+  const tint = new THREE.Color();
+  volumes.forEach(({ x, y, bw, bh, bd, bColor }, i) => {
+    transform.position.set(x, y, 0.02);
+    transform.scale.set(bw, bh, bd);
+    transform.updateMatrix();
+    books.setMatrixAt(i, transform.matrix);
+    books.setColorAt(i, tint.setHex(bColor));
+  });
+  group.add(books);
 
   // Duas velas acesas no topo da estante (como nas fotos 1 e 4)
   [-0.12, 0.12].forEach((cx, cIdx) => {
@@ -788,24 +711,53 @@ function createBookcaseWithProps(woodMat, darkWoodMat, brassMat, candleMat, flam
     group.add(candle, flame);
   });
 
-  return group;
+  return batchStaticMeshes(group);
+}
+
+function createBookSpineMaterial() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 64;
+  canvas.height = 128;
+  const ctx = canvas.getContext('2d');
+  const binding = ctx.createLinearGradient(0, 0, 64, 0);
+  binding.addColorStop(0, '#635b50');
+  binding.addColorStop(0.20, '#c7bba3');
+  binding.addColorStop(0.65, '#e1d5bd');
+  binding.addColorStop(1, '#867868');
+  ctx.fillStyle = binding;
+  ctx.fillRect(0, 0, 64, 128);
+  for (const y of [8, 17, 46, 88, 111, 119]) {
+    ctx.fillStyle = '#7b6954';
+    ctx.fillRect(0, y, 64, 4);
+    ctx.fillStyle = '#f6df9e';
+    ctx.fillRect(6, y + 1, 52, 1.5);
+  }
+  ctx.strokeStyle = '#ebe0c1';
+  ctx.strokeRect(16, 25, 32, 13);
+  const map = new THREE.CanvasTexture(canvas);
+  map.colorSpace = THREE.SRGBColorSpace;
+  return new THREE.MeshStandardMaterial({ map, roughness: 0.8 });
 }
 
 /**
  * Constrói uma Carteira Dupla de Estudante com 2 Cadeiras, 2 Livros e 2 Tinteiros com Penas (Fotos 1, 3 e 4)
  */
-function createStudentDoubleDeskWithChairs(woodMat, darkWoodMat, brassMat, chairFaceSign = 1) {
+function createStudentDoubleDeskWithChairs(woodMat, darkWoodMat, chairFaceSign) {
   const group = new THREE.Group();
   const deskW = 1.24;
   const deskH = 0.74;
   const deskD = 0.68;
 
   // Tampo e saia da mesa
-  const top = new THREE.Mesh(new THREE.BoxGeometry(deskW, 0.05, deskD), woodMat);
+  const top = new THREE.Mesh(new RoundedBoxGeometry(deskW, 0.05, deskD, 1, 0.018), woodMat);
   top.position.y = deskH;
   const apron = new THREE.Mesh(new THREE.BoxGeometry(deskW - 0.10, 0.14, deskD - 0.10), darkWoodMat);
   apron.position.y = deskH - 0.09;
-  group.add(top, apron);
+  const rim = new THREE.Mesh(new THREE.BoxGeometry(deskW - 0.03, 0.027, deskD - 0.03), darkWoodMat);
+  rim.position.y = deskH - 0.031;
+  const stretcher = new THREE.Mesh(new THREE.BoxGeometry(deskW - 0.16, 0.06, 0.065), darkWoodMat);
+  stretcher.position.y = 0.24;
+  group.add(top, apron, rim, stretcher);
 
   // 4 Pernas robustas com travessas laterais
   [
@@ -820,20 +772,27 @@ function createStudentDoubleDeskWithChairs(woodMat, darkWoodMat, brassMat, chair
   });
 
   // 2 Livros sobre a carteira (um vermelho carmesim e um verde/marrom escuro como nas fotos 1 e 3)
-  const book1 = new THREE.Mesh(
-    new THREE.BoxGeometry(0.24, 0.04, 0.30),
-    new THREE.MeshStandardMaterial({ color: 0x7d1919, roughness: 0.7 })
-  );
-  book1.position.set(-0.28, deskH + 0.045, 0.02);
-  book1.rotation.y = 0.18;
-
-  const book2 = new THREE.Mesh(
-    new THREE.BoxGeometry(0.24, 0.04, 0.30),
-    new THREE.MeshStandardMaterial({ color: 0x3b3524, roughness: 0.75 })
-  );
-  book2.position.set(0.24, deskH + 0.045, -0.02);
-  book2.rotation.y = -0.15;
-  group.add(book1, book2);
+  const paperMat = new THREE.MeshStandardMaterial({ color: 0xc4ad83, roughness: 0.95 });
+  const foilMat = new THREE.MeshStandardMaterial({ color: 0xaa8447, roughness: 0.60 });
+  const pageGeo = new THREE.BoxGeometry(0.222, 0.033, 0.268);
+  const coverGeo = new THREE.BoxGeometry(0.24, 0.007, 0.284);
+  for (const [x, z, yaw, coverColor] of [[-0.28, 0.02, 0.18, 0x77242a], [0.24, -0.02, -0.15, 0x374439]]) {
+    const book = new THREE.Group();
+    const coverMat = new THREE.MeshStandardMaterial({ color: coverColor, roughness: 0.70 });
+    const pages = new THREE.Mesh(pageGeo, paperMat);
+    const topCover = new THREE.Mesh(coverGeo, coverMat);
+    topCover.position.y = 0.019;
+    const bottomCover = topCover.clone();
+    bottomCover.position.y = -0.019;
+    const spine = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.041, 0.284), coverMat);
+    spine.position.x = -0.113;
+    const stamp = new THREE.Mesh(new THREE.RingGeometry(0.024, 0.028, 4).rotateX(-Math.PI / 2), foilMat);
+    stamp.position.y = 0.023;
+    book.add(pages, topCover, bottomCover, spine, stamp);
+    book.position.set(x, deskH + 0.047, z);
+    book.rotation.y = yaw;
+    group.add(book);
+  }
 
   // 2 Tinteiros com penas escuras nas extremidades da mesa
   const inkMat = new THREE.MeshStandardMaterial({ color: 0x151518, roughness: 0.3, metalness: 0.5 });
@@ -852,9 +811,18 @@ function createStudentDoubleDeskWithChairs(woodMat, darkWoodMat, brassMat, chair
     const chair = new THREE.Group();
     const seat = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.04, 0.40), woodMat);
     seat.position.y = 0.44;
-    const back = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.42, 0.04), woodMat);
-    back.position.set(0, 0.66, 0.18 * chairFaceSign);
-    chair.add(seat, back);
+    chair.add(seat);
+    for (const height of [0.59, 0.84]) {
+      const backRail = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.049, 0.047), woodMat);
+      backRail.position.set(0, height, 0.18 * chairFaceSign);
+      chair.add(backRail);
+    }
+    const spindleGeo = new THREE.BoxGeometry(0.034, 0.29, 0.036);
+    for (const x of [-0.18, -0.09, 0, 0.09, 0.18]) {
+      const spindle = new THREE.Mesh(spindleGeo, woodMat);
+      spindle.position.set(x, 0.71, 0.18 * chairFaceSign);
+      chair.add(spindle);
+    }
 
     [
       [-0.17, -0.16],
@@ -871,7 +839,7 @@ function createStudentDoubleDeskWithChairs(woodMat, darkWoodMat, brassMat, chair
     group.add(chair);
   });
 
-  return group;
+  return batchStaticMeshes(group);
 }
 
 /**
@@ -881,43 +849,60 @@ function createLionStatueOnPedestal(stoneMat) {
   const group = new THREE.Group();
 
   // Pedestal de pedra com base e cornija
-  const pedBase = new THREE.Mesh(new THREE.BoxGeometry(0.76, 0.14, 0.76), stoneMat);
+  const pedBase = new THREE.Mesh(new RoundedBoxGeometry(0.76, 0.14, 0.76, 1, 0.026), stoneMat);
   pedBase.position.y = 0.07;
   const pedBody = new THREE.Mesh(new THREE.BoxGeometry(0.64, 0.78, 0.64), stoneMat);
   pedBody.position.y = 0.53;
-  const pedCap = new THREE.Mesh(new THREE.BoxGeometry(0.74, 0.12, 0.74), stoneMat);
+  const pedCap = new THREE.Mesh(new RoundedBoxGeometry(0.74, 0.12, 0.74, 1, 0.018), stoneMat);
   pedCap.position.y = 0.98;
   group.add(pedBase, pedBody, pedCap);
 
   // Leão esculpido sentado sobre o pedestal
-  const lionMat = new THREE.MeshStandardMaterial({ color: 0x9e886c, roughness: 0.78 });
-  const haunches = new THREE.Mesh(new THREE.SphereGeometry(0.22, 14, 14), lionMat);
-  haunches.scale.set(0.95, 1.25, 1.1);
-  haunches.position.set(0, 1.26, -0.05);
-
-  const chest = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.21, 0.52, 14), lionMat);
-  chest.position.set(0, 1.44, 0.04);
-  chest.rotation.x = -0.15;
-
-  const mane = new THREE.Mesh(new THREE.SphereGeometry(0.23, 14, 14), lionMat);
-  mane.scale.set(1.0, 1.15, 0.95);
-  mane.position.set(0, 1.76, 0.08);
-
-  const snout = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.14, 0.18), lionMat);
-  snout.position.set(0, 1.73, 0.24);
-
-  // Patas dianteiras
-  [-0.11, 0.11].forEach((px) => {
-    const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.06, 0.50, 10), lionMat);
-    leg.position.set(px, 1.29, 0.18);
-    const paw = new THREE.Mesh(new THREE.SphereGeometry(0.068, 10, 10), lionMat);
-    paw.scale.set(1, 0.6, 1.3);
-    paw.position.set(px, 1.06, 0.23);
-    group.add(leg, paw);
-  });
-
-  group.add(haunches, chest, mane, snout);
-  return group;
+  const lionMat = stoneMat.clone();
+  lionMat.color.setHex(0xc9b69d);
+  const recessMat = lionMat.clone();
+  recessMat.color.setHex(0x8c7258);
+  const carveGeo = new THREE.SphereGeometry(1, 12, 9);
+  const addCarving = (x, y, z, width, height, depth, material = lionMat) => {
+    const piece = new THREE.Mesh(carveGeo, material);
+    piece.position.set(x, y, z);
+    piece.scale.set(width, height, depth);
+    group.add(piece);
+  };
+  addCarving(0, 1.32, -0.05, 0.20, 0.28, 0.25);
+  addCarving(0, 1.5, 0.05, 0.16, 0.32, 0.163);
+  addCarving(0, 1.74, 0.095, 0.19, 0.236, 0.163);
+  addCarving(0, 1.80, 0.207, 0.125, 0.136, 0.105);
+  addCarving(0, 1.726, 0.28, 0.076, 0.035, 0.065);
+  addCarving(0, 1.781, 0.339, 0.052, 0.023, 0.03, recessMat);
+  for (const side of [-1, 1]) {
+    addCarving(side * 0.126, 1.27, -0.07, 0.099, 0.20, 0.20);
+    addCarving(side * 0.10, 1.31, 0.156, 0.053, 0.263, 0.058);
+    addCarving(side * 0.106, 1.082, 0.207, 0.067, 0.045, 0.106);
+    addCarving(side * 0.135, 1.899, 0.177, 0.048, 0.054, 0.031);
+    addCarving(side * 0.07, 1.824, 0.291, 0.030, 0.014, 0.019, recessMat);
+    addCarving(side * 0.038, 1.758, 0.308, 0.049, 0.035, 0.050);
+  }
+  const mane = new THREE.InstancedMesh(carveGeo, lionMat, 12);
+  const tuft = new THREE.Object3D();
+  tuft.scale.set(0.059, 0.087, 0.061);
+  for (let i = 0; i < mane.count; i++) {
+    const angle = i * Math.PI / 6;
+    tuft.position.set(Math.cos(angle) * 0.136, 1.74 + Math.sin(angle) * 0.150, 0.15);
+    tuft.rotation.z = angle - Math.PI / 2;
+    tuft.updateMatrix();
+    mane.setMatrixAt(i, tuft.matrix);
+  }
+  const tailCurve = new THREE.CatmullRomCurve3([
+    new THREE.Vector3(-0.13, 1.14, -0.23),
+    new THREE.Vector3(-0.26, 1.08, -0.09),
+    new THREE.Vector3(-0.27, 1.085, 0.12),
+    new THREE.Vector3(-0.20, 1.09, 0.23),
+    new THREE.Vector3(-0.11, 1.115, 0.26)
+  ]);
+  const tail = new THREE.Mesh(new THREE.TubeGeometry(tailCurve, 18, 0.026, 6), lionMat);
+  group.add(mane, tail);
+  return batchStaticMeshes(group);
 }
 
 /**
@@ -963,7 +948,7 @@ function createTallIronCandelabra(ironMat, candleMat, flameMat) {
     group.add(wax, flame);
   });
 
-  return group;
+  return batchStaticMeshes(group);
 }
 
 /**
@@ -972,12 +957,6 @@ function createTallIronCandelabra(ironMat, candleMat, flameMat) {
 function createCeilingRingChandelier(ironMat, candleMat, flameMat, ceilingY, chandelierY) {
   const group = new THREE.Group();
 
-  // Corrente central desde a roseta do teto até o lustre
-  const chainLen = ceilingY - chandelierY;
-  const mainChain = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.022, chainLen, 8), ironMat);
-  mainChain.position.y = chandelierY + chainLen / 2;
-  group.add(mainChain);
-
   // Anel grande de ferro forjado
   const radius = 0.78;
   const ironRing = new THREE.Mesh(new THREE.TorusGeometry(radius, 0.036, 12, 36), ironMat);
@@ -985,19 +964,15 @@ function createCeilingRingChandelier(ironMat, candleMat, flameMat, ceilingY, cha
   ironRing.position.y = chandelierY;
   group.add(ironRing);
 
-  // 4 Correntes diagonais de sustentação e 8 velas ao redor do anel
+  const crownY = chandelierY + (ceilingY - chandelierY) * 0.67;
+  const junction = new THREE.Vector3(0, crownY, 0);
+  const chains = [[junction, new THREE.Vector3(0, ceilingY, 0)]];
   for (let i = 0; i < 8; i++) {
     const ang = (i * Math.PI * 2) / 8;
     const cx = Math.cos(ang) * radius;
     const cz = Math.sin(ang) * radius;
-
     if (i % 2 === 0) {
-      const diagLen = Math.hypot(radius, chainLen * 0.55);
-      const strut = new THREE.Mesh(new THREE.CylinderGeometry(0.01, 0.01, diagLen, 6), ironMat);
-      strut.position.set(cx * 0.5, chandelierY + chainLen * 0.275, cz * 0.5);
-      strut.lookAt(0, chandelierY + chainLen * 0.55, 0);
-      strut.rotateX(Math.PI / 2);
-      group.add(strut);
+      chains.push([new THREE.Vector3(cx, chandelierY + 0.02, cz), junction]);
     }
 
     // Suporte fleur-de-lis e vela
@@ -1008,13 +983,36 @@ function createCeilingRingChandelier(ironMat, candleMat, flameMat, ceilingY, cha
     wax.position.set(cx, chandelierY + 0.16, cz);
 
     const flame = new THREE.Mesh(new THREE.SphereGeometry(0.032, 8, 8), flameMat);
-    flame.scale.set(0.85, 1.7, 0.85);
+    flame.scale.set(0.63, 1.48, 0.63);
     flame.position.set(cx, chandelierY + 0.31, cz);
 
     group.add(holder, wax, flame);
   }
 
-  return group;
+  const linksPerChain = chains.map(([start, end]) => Math.ceil(start.distanceTo(end) / 0.052));
+  const links = new THREE.InstancedMesh(
+    new THREE.TorusGeometry(0.026, 0.006, 5, 10),
+    ironMat,
+    linksPerChain.reduce((total, n) => total + n, 0)
+  );
+  const up = new THREE.Vector3(0, 1, 0);
+  const direction = new THREE.Vector3();
+  const transform = new THREE.Object3D();
+  transform.scale.y = 1.33;
+  let index = 0;
+  chains.forEach(([start, end], chainIndex) => {
+    const count = linksPerChain[chainIndex];
+    direction.subVectors(end, start).normalize();
+    for (let i = 0; i < count; i++) {
+      transform.position.lerpVectors(start, end, (i + 0.5) / count);
+      transform.quaternion.setFromUnitVectors(up, direction);
+      transform.rotateY(i % 2 === 0 ? 0 : Math.PI / 2);
+      transform.updateMatrix();
+      links.setMatrixAt(index++, transform.matrix);
+    }
+  });
+  group.add(links);
+  return batchStaticMeshes(group);
 }
 
 /**
@@ -1029,52 +1027,96 @@ export function createWizardClassroom(scene) {
   const roomGroup = new THREE.Group();
   scene.add(roomGroup);
 
-  const wallStoneTex = createWarmSandstoneWallTexture();
-  const floorStoneTex = createStoneFloorTileTexture();
-  const woodTex = createWoodTexture(false);
-  const darkWoodTex = createWoodTexture(true);
-  const carpetTex = createRoyalRedCarpetTexture();
-  const windowTex = createGothicWindowTexture();
-  const blackboardTex = createBlackboardTexture();
-
   // Dimensões do Salão 3D Maior e do Tapete Vermelho Central Caminhável
   const walkableWidth = 1.5;   // X: -0.75m a +0.75m (Tapete Vermelho)
   const walkableLength = 4.0;  // Z: -2.00m a +2.00m (Tapete Vermelho)
   const visualWidth = 6.8;     // X: -3.40m a +3.40m (Salão completo com carteiras e estantes nas laterais)
   const roomLength = 8.6;      // Z: -4.30m a +4.30m (Fundo com Portas Duplas até Frente com Plataforma da Professora)
   const roomHeight = 5.2;      // Altura até o teto abobadado com lustre circular
+  const vaultSpring = 3.44;
+
+  const textureLoader = new THREE.TextureLoader();
+  const stoneGrainCanvas = document.createElement('canvas');
+  stoneGrainCanvas.width = stoneGrainCanvas.height = 256;
+  const stoneGrainCtx = stoneGrainCanvas.getContext('2d');
+  stoneGrainCtx.fillStyle = '#c0ac8e';
+  stoneGrainCtx.fillRect(0, 0, 256, 256);
+  const stoneGrainTex = new THREE.CanvasTexture(stoneGrainCanvas);
+  stoneGrainTex.colorSpace = THREE.SRGBColorSpace;
+  const wallStoneTex = loadClassroomTexture(textureLoader, 'limestone.webp', 4.2, 2.55, ({ image }) => {
+    // Reutiliza a superfície de um único bloco nas molduras e pedras esculpidas.
+    const size = image.width;
+    stoneGrainCtx.drawImage(image, size * 0.026, size * 0.019, size * 0.188, size * 0.11, 0, 0, 256, 256);
+    stoneGrainTex.needsUpdate = true;
+  });
+  const endStoneTex = wallStoneTex.clone();
+  endStoneTex.repeat.x *= visualWidth / roomLength;
+  const vaultStoneTex = endStoneTex.clone();
+  vaultStoneTex.repeat.y = endStoneTex.repeat.x;
+  const floorStoneTex = loadClassroomTexture(textureLoader, 'flagstones.webp', 3.75, 4.7);
+  const woodTex = loadClassroomTexture(textureLoader, 'walnut.webp');
+  const doorWoodTex = woodTex.clone();
+  doorWoodTex.rotation = Math.PI / 2;
+  const carpetTex = createRoyalRedCarpetTexture();
+  const windowTex = createGothicWindowTexture();
+  const blackboardTex = createBlackboardTexture();
 
   const wallMat = new THREE.MeshStandardMaterial({
     map: wallStoneTex,
-    roughness: 0.88,
-    metalness: 0.04
+    bumpMap: wallStoneTex,
+    bumpScale: 0.022,
+    roughness: 0.93
   });
+  const endWallMat = wallMat.clone();
+  endWallMat.map = endWallMat.bumpMap = endStoneTex;
+  const vaultMat = wallMat.clone();
+  vaultMat.map = vaultMat.bumpMap = vaultStoneTex;
   const stoneDetailMat = new THREE.MeshStandardMaterial({
-    color: 0xa69076,
-    roughness: 0.82
+    color: 0xd7c9ba,
+    map: stoneGrainTex,
+    roughness: 0.92
   });
+  const traceryMat = stoneDetailMat.clone();
+  traceryMat.color.setHex(0xe0c8a4);
   const woodMat = new THREE.MeshStandardMaterial({
     map: woodTex,
-    roughness: 0.62,
-    metalness: 0.06
+    roughness: 0.46
   });
-  const darkWoodMat = new THREE.MeshStandardMaterial({
-    map: darkWoodTex,
-    roughness: 0.58,
-    metalness: 0.08
-  });
+  const darkWoodMat = woodMat.clone();
+  darkWoodMat.color.setHex(0xc6aa96);
+  const bookSpineMat = createBookSpineMaterial();
+  const doorWoodMat = darkWoodMat.clone();
+  doorWoodMat.map = doorWoodTex;
   const ironMat = new THREE.MeshStandardMaterial({
-    color: 0x1f1d1b,
-    roughness: 0.45,
-    metalness: 0.75
+    color: 0x323233,
+    roughness: 0.62,
+    metalness: 0.28
   });
   const brassMat = new THREE.MeshStandardMaterial({
-    color: 0xd4a843,
-    roughness: 0.32,
-    metalness: 0.78
+    color: 0xcda04f,
+    roughness: 0.33,
+    metalness: 0.48
   });
-  const candleMat = new THREE.MeshBasicMaterial({ color: 0xfff6dc });
-  const flameMat = new THREE.MeshBasicMaterial({ color: 0xffb72b });
+  const candleMat = new THREE.MeshStandardMaterial({
+    color: 0xf7dfa8,
+    emissive: 0xc47527,
+    emissiveIntensity: 0.19,
+    roughness: 0.62
+  });
+  const flameMat = new THREE.MeshBasicMaterial({ color: 0xffdf9d });
+  const softEdgeTex = createSoftEdgeTexture();
+  const softPlane = new THREE.PlaneGeometry(1, 1);
+  const wallGlowMat = new THREE.MeshBasicMaterial({
+    map: softEdgeTex, color: 0xffa34b, transparent: true, depthWrite: false,
+    blending: THREE.AdditiveBlending, opacity: 0.43
+  });
+  const floorShadowMat = new THREE.MeshBasicMaterial({
+    map: softEdgeTex, color: 0x160c08, transparent: true, depthWrite: false, opacity: 0.65
+  });
+  const flameGlowMat = new THREE.SpriteMaterial({
+    map: softEdgeTex, color: 0xffa83b, transparent: true, depthWrite: false,
+    blending: THREE.AdditiveBlending, opacity: 0.61
+  });
 
   // ============================================================================
   // 1. PISO DE LAJES DE PEDRA E TAPETE VERMELHO CENTRAL (ÁREA CAMINHÁVEL)
@@ -1083,8 +1125,9 @@ export function createWizardClassroom(scene) {
   floorGeo.rotateX(-Math.PI / 2);
   const floorMat = new THREE.MeshStandardMaterial({
     map: floorStoneTex,
-    roughness: 0.84,
-    metalness: 0.05
+    bumpMap: floorStoneTex,
+    bumpScale: 0.016,
+    roughness: 0.92
   });
   const floor = new THREE.Mesh(floorGeo, floorMat);
   roomGroup.add(floor);
@@ -1152,140 +1195,130 @@ export function createWizardClassroom(scene) {
   rightWall.position.set(visualWidth / 2, roomHeight / 2, 0);
   roomGroup.add(rightWall);
 
-  const backWall = new THREE.Mesh(new THREE.PlaneGeometry(visualWidth, roomHeight), wallMat);
+  const endWallGeo = new THREE.PlaneGeometry(visualWidth, roomHeight);
+  const backWall = new THREE.Mesh(endWallGeo, endWallMat);
   backWall.position.set(0, roomHeight / 2, -roomLength / 2);
-  roomGroup.add(backWall);
-
-  const frontWall = new THREE.Mesh(new THREE.PlaneGeometry(visualWidth, roomHeight), wallMat);
+  const frontWall = new THREE.Mesh(endWallGeo, endWallMat);
   frontWall.rotation.y = Math.PI;
   frontWall.position.set(0, roomHeight / 2, roomLength / 2);
-  roomGroup.add(frontWall);
+  roomGroup.add(backWall, frontWall);
+  roomGroup.add(createVaultedCeiling(
+    visualWidth, roomLength, vaultSpring, roomHeight, vaultMat, stoneDetailMat, darkWoodMat
+  ));
 
-  const ceiling = new THREE.Mesh(new THREE.PlaneGeometry(visualWidth, roomLength), wallMat);
-  ceiling.rotation.x = Math.PI / 2;
-  ceiling.position.y = roomHeight;
-  roomGroup.add(ceiling);
+  // Os halos fixos na alvenaria dão luz localizada às arandelas sem luzes extras por vela.
+  const addWallGlow = (x, y, z, yaw, width, height) => {
+    const glow = new THREE.Mesh(softPlane, wallGlowMat);
+    glow.position.set(x, y, z);
+    glow.rotation.y = yaw;
+    glow.scale.set(width, height, 1);
+    roomGroup.add(glow);
+  };
+  const addFloorShadow = (x, z, width, length, y = 0.003) => {
+    const shadow = new THREE.Mesh(softPlane, floorShadowMat);
+    shadow.rotation.x = -Math.PI / 2;
+    shadow.position.set(x, y, z);
+    shadow.scale.set(width, length, 1);
+    roomGroup.add(shadow);
+  };
+  const addFlameGlow = (parent, x, y, z, width, height) => {
+    const glow = new THREE.Sprite(flameGlowMat);
+    glow.position.set(x, y, z);
+    glow.scale.set(width, height, 1);
+    parent.add(glow);
+  };
 
-  // Pilares de pedra, Mísulas (corbels), Arcos de Madeira do Teto Abobadado e Arandelas de Vela (Fotos 2 e 4)
-  const bayZPositions = [-3.6, -1.2, 1.2, 3.6];
-  bayZPositions.forEach((zPos) => {
-    [-visualWidth / 2 + 0.14, visualWidth / 2 - 0.14].forEach((xPos) => {
-      const signX = Math.sign(xPos);
-      // Pilar de pedra
-      const pillar = new THREE.Mesh(new THREE.BoxGeometry(0.28, roomHeight, 0.34), stoneDetailMat);
-      pillar.position.set(xPos, roomHeight / 2, zPos);
-      roomGroup.add(pillar);
-
-      // Mísula de pedra (corbel) no alto do pilar
-      const corbel = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.24, 0.38), stoneDetailMat);
-      corbel.position.set(xPos - signX * 0.10, 3.55, zPos);
-      roomGroup.add(corbel);
-
-      // Arandela de ferro forjado com 2 velas acesas no pilar
-      const sconce = new THREE.Group();
-      const bracket = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.04, 0.04), ironMat);
-      const crossbar = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.04, 0.24), ironMat);
-      crossbar.position.x = -signX * 0.09;
-      sconce.add(bracket, crossbar);
-      [-0.09, 0.09].forEach((cz) => {
-        const w = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.16, 8), candleMat);
-        w.position.set(-signX * 0.09, 0.09, cz);
-        const f = new THREE.Mesh(new THREE.SphereGeometry(0.02, 8, 8), flameMat);
-        f.scale.set(0.8, 1.6, 0.8);
-        f.position.set(-signX * 0.09, 0.19, cz);
-        sconce.add(w, f);
-      });
-      sconce.position.set(xPos - signX * 0.14, 2.55, zPos);
-      roomGroup.add(sconce);
-    });
-
-    // Viga transversal e arcos curvos de madeira escura no teto (Fotos 2 e 4)
-    const transverseBeam = new THREE.Mesh(new THREE.BoxGeometry(visualWidth - 0.3, 0.24, 0.26), darkWoodMat);
-    transverseBeam.position.set(0, roomHeight - 0.14, zPos);
-    roomGroup.add(transverseBeam);
-
-    // Pés-direitos curvos de madeira subindo das mísulas até o teto
-    [-1, 1].forEach((sideSign) => {
-      const archStrut = new THREE.Mesh(new THREE.BoxGeometry(0.22, 1.65, 0.24), darkWoodMat);
-      archStrut.position.set(sideSign * (visualWidth / 2 - 0.55), 4.32, zPos);
-      archStrut.rotation.z = sideSign * 0.42;
-      roomGroup.add(archStrut);
-    });
-
-    // Roseta / medalhão esculpido de pedra no centro da nervura do teto
-    const boss = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 0.10, 16), stoneDetailMat);
-    boss.position.set(0, roomHeight - 0.24, zPos);
-    roomGroup.add(boss);
-  });
-
-  // Duas vigas longitudinais de madeira no teto e nervuras diagonais das abóbadas (Foto 2)
-  [-1.95, 1.95].forEach((lx) => {
-    const longBeam = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.22, roomLength), darkWoodMat);
-    longBeam.position.set(lx, roomHeight - 0.14, 0);
-    roomGroup.add(longBeam);
-  });
-
-  [-2.4, 0.0, 2.4].forEach((vaultCenterZ) => {
-    // Roseta central da abóbada
-    const centerBoss = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.26, 0.12, 16), stoneDetailMat);
-    centerBoss.position.set(0, roomHeight - 0.10, vaultCenterZ);
-    roomGroup.add(centerBoss);
-
-    // Nervuras diagonais de pedra cruzando o teto
-    [1, -1].forEach((dir) => {
-      const rib = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.10, 4.4), stoneDetailMat);
-      rib.position.set(0, roomHeight - 0.06, vaultCenterZ);
-      rib.rotation.y = dir * 0.72;
-      roomGroup.add(rib);
-    });
-  });
-
-  // Lustre Circular Medieval de Ferro Forjado com 8 Velas pendurado no centro do teto (Fotos 2 e 4)
-  const chandelier = createCeilingRingChandelier(ironMat, candleMat, flameMat, roomHeight, 3.75);
-  roomGroup.add(chandelier);
-
-  // Janelas Góticas Iluminadas nas paredes laterais (inferiores entre as estantes e superiores no clerestório)
   const windowMat = new THREE.MeshBasicMaterial({ map: windowTex });
-  [-2.4, 0.0, 2.4].forEach((zWin) => {
-    [-1, 1].forEach((sideSign) => {
-      // Janela gótica principal
-      const winLower = new THREE.Mesh(new THREE.PlaneGeometry(0.95, 2.15), windowMat);
-      winLower.rotation.y = -sideSign * (Math.PI / 2);
-      winLower.position.set(sideSign * (visualWidth / 2 - 0.03), 2.35, zWin);
-      roomGroup.add(winLower);
+  const lowerWindow = createGothicWindow(1.09, 1.88, windowMat, stoneDetailMat, traceryMat);
+  const upperWindow = createGothicWindow(1.18, 1.47, windowMat, stoneDetailMat, traceryMat);
+  const bayLength = roomLength / 3;
+  const plinthGeo = new THREE.BoxGeometry(0.15, 0.16, roomLength);
+  const pillarGeo = new THREE.BoxGeometry(0.23, vaultSpring, 0.34);
+  const corbelGeo = new THREE.BoxGeometry(0.39, 0.14, 0.46);
+  const bracketGeo = new THREE.BoxGeometry(0.21, 0.045, 0.23);
+  const cupGeo = new THREE.CylinderGeometry(0.042, 0.023, 0.036, 10);
+  const waxGeo = new THREE.CylinderGeometry(0.014, 0.017, 0.15, 8);
+  const wickFlameGeo = new THREE.SphereGeometry(0.018, 8, 6);
+  for (const sign of [-1, 1]) {
+    const xWall = sign * visualWidth / 2;
+    const yaw = -sign * Math.PI / 2;
+    const plinth = new THREE.Mesh(plinthGeo, stoneDetailMat);
+    plinth.position.set(xWall - sign * 0.06, 0.08, 0);
+    roomGroup.add(plinth);
 
-      // Peitoril chanfrado de pedra sob a janela
-      const sill = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.12, 1.10), stoneDetailMat);
-      sill.position.set(sideSign * (visualWidth / 2 - 0.12), 1.24, zWin);
-      roomGroup.add(sill);
+    for (const z of [-bayLength, 0, bayLength]) {
+      const lowWindow = lowerWindow.clone();
+      lowWindow.position.set(xWall, 0.88, z);
+      lowWindow.rotation.y = yaw;
+      const highWindow = upperWindow.clone();
+      highWindow.position.set(xWall, 3.23, z);
+      highWindow.rotation.y = yaw;
+      roomGroup.add(lowWindow, highWindow);
+    }
 
-      // Janela gótica superior (clerestório junto às abóbadas, Fotos 2 e 4)
-      const winUpper = new THREE.Mesh(new THREE.PlaneGeometry(0.85, 1.25), windowMat);
-      winUpper.rotation.y = -sideSign * (Math.PI / 2);
-      winUpper.position.set(sideSign * (visualWidth / 2 - 0.03), 4.25, zWin);
-      roomGroup.add(winUpper);
-    });
-  });
+    for (const z of [-roomLength / 2 + 0.16, -bayLength / 2, bayLength / 2, roomLength / 2 - 0.16]) {
+      const pillar = new THREE.Mesh(pillarGeo, stoneDetailMat);
+      pillar.position.set(xWall - sign * 0.09, vaultSpring / 2, z);
+      const corbel = new THREE.Mesh(corbelGeo, stoneDetailMat);
+      corbel.position.set(xWall - sign * 0.14, vaultSpring - 0.05, z);
+      const neck = corbel.clone();
+      neck.scale.set(0.82, 0.66, 0.85);
+      neck.position.y -= 0.12;
+      roomGroup.add(pillar, corbel, neck);
+
+      const sconce = new THREE.Group();
+      const bracket = new THREE.Mesh(bracketGeo, ironMat);
+      bracket.position.x = -sign * 0.075;
+      sconce.add(bracket);
+      for (const [j, zOffset] of [-0.092, 0.092].entries()) {
+        const height = j * 0.055;
+        const x = -sign * 0.15;
+        const cup = new THREE.Mesh(cupGeo, ironMat);
+        cup.position.set(x, 0.027 + height, zOffset);
+        const wax = new THREE.Mesh(waxGeo, candleMat);
+        wax.position.set(x, 0.116 + height, zOffset);
+        const flame = new THREE.Mesh(wickFlameGeo, flameMat);
+        flame.position.set(x, 0.214 + height, zOffset);
+        flame.scale.set(0.57, 1.47, 0.57);
+        sconce.add(cup, wax, flame);
+      }
+      sconce.position.set(xWall - sign * 0.22, 2.77, z);
+      addFlameGlow(sconce, -sign * 0.15, 0.24, 0, 0.36, 0.43);
+      addWallGlow(xWall - sign * 0.004, 2.85, z, yaw, 2.08, 2.36);
+      roomGroup.add(batchStaticMeshes(sconce));
+    }
+  }
+
+  const chandelierY = 3.72;
+  roomGroup.add(createCeilingRingChandelier(ironMat, candleMat, flameMat, roomHeight - 0.15, chandelierY));
+  for (let i = 0; i < 8; i++) {
+    const angle = i * Math.PI / 4;
+    addFlameGlow(roomGroup, 0.78 * Math.cos(angle), chandelierY + 0.31, 0.78 * Math.sin(angle), 0.33, 0.51);
+  }
 
   // ============================================================================
   // 3. LATERAIS INACESSÍVEIS AO USUÁRIO: 4 CARTEIRAS DUPLAS + 4 ESTANTES DE LIVROS
   // ============================================================================
+  const deskTemplate = createStudentDoubleDeskWithChairs(woodMat, darkWoodMat, -1);
   const deskZPositions = [-0.82, 0.74];
   deskZPositions.forEach((zDesk) => {
     [-1.78, 1.78].forEach((xDesk) => {
       // Cadeiras em Z menor (-Z) e frente da carteira voltada para a Mesa da Professora (+Z)
-      const studentDesk = createStudentDoubleDeskWithChairs(woodMat, darkWoodMat, brassMat, -1);
+      const studentDesk = deskTemplate.clone();
       studentDesk.position.set(xDesk, 0, zDesk);
       roomGroup.add(studentDesk);
+      addFloorShadow(xDesk, zDesk - 0.11, 1.65, 1.45);
     });
   });
 
   // 4 Estantes Altas de Madeira encostadas nas paredes laterais (2 de cada lado, Fotos 1, 3 e 4)
-  const bookcaseZPositions = [-1.25, 1.20];
+  const bookcaseZPositions = [-bayLength / 2, bayLength / 2];
+  const bookcaseX = visualWidth / 2 - 0.50;
   bookcaseZPositions.forEach((zBook, idx) => {
     const leftBookcase = createBookcaseWithProps(
       woodMat,
       darkWoodMat,
+      bookSpineMat,
       brassMat,
       candleMat,
       flameMat,
@@ -1293,12 +1326,13 @@ export function createWizardClassroom(scene) {
       idx
     );
     leftBookcase.rotation.y = Math.PI / 2;
-    leftBookcase.position.set(-visualWidth / 2 + 0.24, 0, zBook);
+    leftBookcase.position.set(-bookcaseX, 0, zBook);
     roomGroup.add(leftBookcase);
 
     const rightBookcase = createBookcaseWithProps(
       woodMat,
       darkWoodMat,
+      bookSpineMat,
       brassMat,
       candleMat,
       flameMat,
@@ -1306,17 +1340,23 @@ export function createWizardClassroom(scene) {
       idx
     );
     rightBookcase.rotation.y = -Math.PI / 2;
-    rightBookcase.position.set(visualWidth / 2 - 0.24, 0, zBook);
+    rightBookcase.position.set(bookcaseX, 0, zBook);
     roomGroup.add(rightBookcase);
+    for (const side of [-1, 1]) {
+      addFloorShadow(side * bookcaseX, zBook, 0.99, 1.83);
+    }
   });
 
   // ============================================================================
   // 4. CADEIRA CENTRAL DO USUÁRIO (X = 0, Z = 0 — Desaparece 10s após movimento!)
   // ============================================================================
   const playerChair = new THREE.Group();
-  const chairWoodMat = woodMat.clone();
-  chairWoodMat.transparent = true;
-  chairWoodMat.opacity = 1.0;
+  const chairWoodMat = new THREE.MeshStandardMaterial({
+    map: createPlayerChairTexture(),
+    roughness: 0.62,
+    metalness: 0.06,
+    transparent: true
+  });
 
   const chairSeat = new THREE.Mesh(new THREE.BoxGeometry(0.50, 0.05, 0.48), chairWoodMat);
   chairSeat.position.y = 0.46;
@@ -1360,7 +1400,7 @@ export function createWizardClassroom(scene) {
   const wtHeight = 0.84;
   const wtDepth = 0.62;
 
-  const wtTop = new THREE.Mesh(new THREE.BoxGeometry(wtWidth + 0.08, 0.06, wtDepth + 0.08), woodMat);
+  const wtTop = new THREE.Mesh(new RoundedBoxGeometry(wtWidth + 0.08, 0.06, wtDepth + 0.08, 1, 0.018), woodMat);
   wtTop.position.y = wtHeight;
   const wtBody = new THREE.Mesh(new THREE.BoxGeometry(wtWidth, wtHeight - 0.06, wtDepth), darkWoodMat);
   wtBody.position.y = (wtHeight - 0.06) / 2;
@@ -1368,16 +1408,21 @@ export function createWizardClassroom(scene) {
   wtBase.position.y = 0.04;
   wandTable.add(wtTop, wtBody, wtBase);
 
-  // Entalhes frontais: 4 arcos góticos e uma roseta central (exatamente como na Foto 1)
+  // Entalhes frontais com arcos e uma roseta central.
   [-0.46, -0.22, 0.22, 0.46].forEach((ax) => {
-    const archFrame = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.52, 0.03), woodMat);
-    archFrame.position.set(ax, 0.42, wtDepth / 2 + 0.015);
+    const archFrame = createCarvedPanel(0.16, 0.48, woodMat, darkWoodMat);
+    archFrame.position.set(ax, 0.14, wtDepth / 2);
     wandTable.add(archFrame);
   });
-  const centerRosette = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.13, 0.04, 16), woodMat);
-  centerRosette.rotation.x = Math.PI / 2;
-  centerRosette.position.set(0, 0.42, wtDepth / 2 + 0.02);
-  wandTable.add(centerRosette);
+  const petalGeo = new THREE.TorusGeometry(0.043, 0.007, 5, 11);
+  for (let i = 0; i < 6; i++) {
+    const angle = i * Math.PI / 3;
+    const petal = new THREE.Mesh(petalGeo, woodMat);
+    petal.position.set(Math.cos(angle) * 0.052, 0.39 + Math.sin(angle) * 0.052, wtDepth / 2 + 0.015);
+    petal.rotation.z = angle;
+    petal.scale.y = 0.65;
+    wandTable.add(petal);
+  }
 
   // Objetos decorativos nas laterais da mesa de trás (Foto 4: castiçais à esquerda e poções à direita)
   [-0.54, -0.44].forEach((cx, idx) => {
@@ -1412,7 +1457,8 @@ export function createWizardClassroom(scene) {
   wandTable.add(cushion);
 
   wandTable.position.set(0, 0, -2.14);
-  roomGroup.add(wandTable);
+  roomGroup.add(batchStaticMeshes(wandTable));
+  addFloorShadow(0, wandTable.position.z - 0.04, 1.80, 1.18);
 
   // As 3 Varinhas Mágicas selecionáveis sobre a mesa da parte de trás da sala
   const wandsOnTable = [];
@@ -1456,67 +1502,70 @@ export function createWizardClassroom(scene) {
     wandsOnTable.push(wMesh);
   });
 
-  // Portas Duplas de Madeira em Arco Gótico na parede de fundo (Z = -4.26m, Fotos 1 e 4)
-  const backDoorZ = -roomLength / 2 + 0.04;
-  const doorArchGroup = new THREE.Group();
-  doorArchGroup.position.set(0, 0, backDoorZ);
+  // Portal ogival em camadas, folhas de madeira e escudo acima da moldura.
+  const backDoorZ = -roomLength / 2;
+  const door = createGothicDoor(stoneDetailMat, doorWoodMat, ironMat);
+  door.position.z = backDoorZ;
 
-  // Moldura monumental de pedra do arco da porta
-  [-0.98, 0.98].forEach((px) => {
-    const jamb = new THREE.Mesh(new THREE.BoxGeometry(0.28, 2.65, 0.26), stoneDetailMat);
-    jamb.position.set(px, 1.325, 0.08);
-    doorArchGroup.add(jamb);
+  const shield = new THREE.Shape();
+  shield.moveTo(-0.29, 0.24);
+  shield.quadraticCurveTo(0, 0.31, 0.29, 0.24);
+  shield.lineTo(0.26, -0.025);
+  shield.quadraticCurveTo(0.22, -0.21, 0, -0.31);
+  shield.quadraticCurveTo(-0.22, -0.21, -0.26, -0.025);
+  shield.closePath();
+  const shieldGeo = new THREE.ExtrudeGeometry(shield, {
+    depth: 0.058, bevelSize: 0.016, bevelThickness: 0.013, bevelSegments: 2
   });
-  const archRing = new THREE.Mesh(new THREE.TorusGeometry(0.98, 0.16, 12, 28, Math.PI), stoneDetailMat);
-  archRing.position.set(0, 2.65, 0.08);
-  doorArchGroup.add(archRing);
-
-  // Folhas duplas de madeira da porta com dobradiças de ferro forjado e puxadores de argola
-  const doorRect = new THREE.Mesh(new THREE.BoxGeometry(1.76, 2.65, 0.10), darkWoodMat);
-  doorRect.position.set(0, 1.325, 0.02);
-  const doorArchTop = new THREE.Mesh(new THREE.CylinderGeometry(0.88, 0.88, 0.10, 24, 1, false, 0, Math.PI), darkWoodMat);
-  doorArchTop.rotation.z = -Math.PI / 2;
-  doorArchTop.rotation.y = Math.PI / 2;
-  doorArchTop.position.set(0, 2.65, 0.02);
-  const centerSeam = new THREE.Mesh(new THREE.BoxGeometry(0.03, 3.52, 0.12), ironMat);
-  centerSeam.position.set(0, 1.76, 0.02);
-  doorArchGroup.add(doorRect, doorArchTop, centerSeam);
-
-  // Ferragens (dobradiças horizontais e argolas de ferro)
-  [1.15, 2.25].forEach((hy) => {
-    [-0.52, 0.52].forEach((hx) => {
-      const strap = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.06, 0.03), ironMat);
-      strap.position.set(hx, hy, 0.08);
-      doorArchGroup.add(strap);
-    });
-  });
-  [-0.16, 0.16].forEach((rx) => {
-    const ringHandle = new THREE.Mesh(new THREE.TorusGeometry(0.075, 0.016, 8, 16), ironMat);
-    ringHandle.position.set(rx, 1.42, 0.09);
-    doorArchGroup.add(ringHandle);
-  });
-
-  // Brasão de Pedra com Leão esculpido acima do arco da porta (Fotos 1 e 4)
-  const crestShield = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.72, 0.14), stoneDetailMat);
-  crestShield.position.set(0, 3.95, 0.10);
-  doorArchGroup.add(crestShield);
-
-  roomGroup.add(doorArchGroup);
+  const crestShield = new THREE.Mesh(shieldGeo, stoneDetailMat);
+  crestShield.position.set(0, 3.74, 0.065);
+  const crestCanvas = document.createElement('canvas');
+  crestCanvas.width = crestCanvas.height = 256;
+  drawGoldenLionCrest(crestCanvas.getContext('2d'), 128, 134, 92);
+  const crestTex = new THREE.CanvasTexture(crestCanvas);
+  crestTex.colorSpace = THREE.SRGBColorSpace;
+  const relief = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.47, 0.47),
+    new THREE.MeshStandardMaterial({
+      map: crestTex, color: 0xe0c7ad, roughness: 0.86, alphaTest: 0.4, transparent: false
+    })
+  );
+  relief.position.z = 0.074;
+  crestShield.add(relief);
+  door.add(crestShield);
+  roomGroup.add(door);
 
   // 2 Estátuas de Leão de Pedra sobre Pedestais + 2 Candelabros Altos + 2 Estandartes Vermelhos/Dourados (Fotos 1 e 4)
   const bannerCanvas = document.createElement('canvas');
   bannerCanvas.width = 256;
   bannerCanvas.height = 512;
   const bCtx = bannerCanvas.getContext('2d');
-  bCtx.fillStyle = '#821219';
+  const velvet = bCtx.createLinearGradient(0, 0, 256, 0);
+  velvet.addColorStop(0, '#580f17');
+  velvet.addColorStop(0.28, '#861d29');
+  velvet.addColorStop(0.51, '#700f18');
+  velvet.addColorStop(0.76, '#8b1b28');
+  velvet.addColorStop(1, '#570e18');
+  bCtx.fillStyle = velvet;
   bCtx.fillRect(0, 0, 256, 512);
   bCtx.strokeStyle = '#e5b842';
-  bCtx.lineWidth = 14;
-  bCtx.strokeRect(10, 10, 236, 492);
-  drawGoldenLionCrest(bCtx, 128, 245, 88);
+  bCtx.lineWidth = 9;
+  bCtx.strokeRect(10, 9, 236, 497);
+  drawGoldenLionCrest(bCtx, 128, 240, 96);
   const bannerTex = new THREE.CanvasTexture(bannerCanvas);
   bannerTex.colorSpace = THREE.SRGBColorSpace;
   const bannerMat = new THREE.MeshStandardMaterial({ map: bannerTex, roughness: 0.8, side: THREE.DoubleSide });
+  const bannerGeo = new THREE.PlaneGeometry(0.76, 1.54, 16, 8);
+  const fabric = bannerGeo.getAttribute('position');
+  for (let i = 0; i < fabric.count; i++) {
+    const x = fabric.getX(i);
+    const fold = Math.sin(x * 24) * 0.012;
+    const fromTop = 0.5 - fabric.getY(i) / 1.54;
+    const notch = (1 - Math.abs(x / 0.38)) * 0.24;
+    fabric.setY(i, fabric.getY(i) + notch * fromTop);
+    fabric.setZ(i, fold * (0.25 + fromTop * 0.75));
+  }
+  bannerGeo.computeVertexNormals();
 
   [-1, 1].forEach((sideSign) => {
     // Estátua de Leão sobre pedestal
@@ -1524,18 +1573,22 @@ export function createWizardClassroom(scene) {
     lionStatue.position.set(sideSign * 1.62, 0, -3.72);
     lionStatue.rotation.y = -sideSign * 0.12;
     roomGroup.add(lionStatue);
+    addFloorShadow(lionStatue.position.x, lionStatue.position.z, 1.12, 1.12);
 
     // Candelabro alto de ferro forjado ao lado da porta
     const candelabra = createTallIronCandelabra(ironMat, candleMat, flameMat);
     candelabra.position.set(sideSign * 1.12, 0, -3.48);
     roomGroup.add(candelabra);
+    addFloorShadow(candelabra.position.x, candelabra.position.z, 0.72, 0.68);
+    addFlameGlow(candelabra, 0, 2.10, 0, 0.55, 0.48);
+    addWallGlow(sideSign * 1.23, 2.18, backDoorZ + 0.005, 0, 2.4, 2.62);
 
     // Estandarte Vermelho e Dourado pendurado na parede de fundo acima do leão
-    const banner = new THREE.Mesh(new THREE.PlaneGeometry(0.76, 1.68), bannerMat);
-    banner.position.set(sideSign * 1.62, 3.22, backDoorZ + 0.06);
-    const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.92, 8), darkWoodMat);
+    const banner = new THREE.Mesh(bannerGeo, bannerMat);
+    banner.position.set(sideSign * 1.72, 3.22, backDoorZ + 0.10);
+    const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.024, 0.024, 0.96, 12), ironMat);
     rod.rotation.z = Math.PI / 2;
-    rod.position.set(sideSign * 1.62, 4.08, backDoorZ + 0.06);
+    rod.position.set(sideSign * 1.72, 4.00, backDoorZ + 0.11);
     roomGroup.add(banner, rod);
   });
 
@@ -1555,7 +1608,7 @@ export function createWizardClassroom(scene) {
   const tdHeight = 0.80;
   const tdDepth = 0.72;
 
-  const tdTop = new THREE.Mesh(new THREE.BoxGeometry(tdWidth + 0.08, 0.06, tdDepth + 0.08), woodMat);
+  const tdTop = new THREE.Mesh(new RoundedBoxGeometry(tdWidth + 0.08, 0.06, tdDepth + 0.08, 1, 0.018), woodMat);
   tdTop.position.y = tdHeight;
   const tdBody = new THREE.Mesh(new THREE.BoxGeometry(tdWidth, tdHeight - 0.06, tdDepth), darkWoodMat);
   tdBody.position.y = (tdHeight - 0.06) / 2;
@@ -1637,7 +1690,8 @@ export function createWizardClassroom(scene) {
   teacherDesk.add(teacherInkwell);
 
   teacherDesk.position.set(0, 0.08, 2.22);
-  roomGroup.add(teacherDesk);
+  roomGroup.add(batchStaticMeshes(teacherDesk));
+  addFloorShadow(0, 2.48, 1.96, 1.38, 0.163);
 
   // A GRANDE PENA DE PÁSSARO BRANCA pousada no centro-frontal da Mesa da Professora (acessível do tapete!)
   const { featherGroup, auraRing, vaneMat } = createLargeWhiteFeather();
@@ -1660,9 +1714,9 @@ export function createWizardClassroom(scene) {
   roomGroup.add(teacherChair);
 
   // Janela Gótica atrás da Cadeira da Professora na parede frontal (Foto 3)
-  const frontWindow = new THREE.Mesh(new THREE.PlaneGeometry(1.45, 2.25), windowMat);
+  const frontWindow = createGothicWindow(1.62, 2.28, windowMat, stoneDetailMat, traceryMat);
   frontWindow.rotation.y = Math.PI;
-  frontWindow.position.set(0, 2.55, roomLength / 2 - 0.03);
+  frontWindow.position.set(0, 1.60, roomLength / 2);
   roomGroup.add(frontWindow);
 
   // Quadro-Negro de Madeira com fórmulas arcanas na plataforma frontal (Foto 3)
@@ -1687,6 +1741,7 @@ export function createWizardClassroom(scene) {
   const frontBookcase = createBookcaseWithProps(
     woodMat,
     darkWoodMat,
+    bookSpineMat,
     brassMat,
     candleMat,
     flameMat,
@@ -1725,7 +1780,7 @@ export function createWizardClassroom(scene) {
   const candles = [];
   const floatCandleGeo = new THREE.CylinderGeometry(0.016, 0.016, 0.20, 8);
   const floatFlameGeo = new THREE.SphereGeometry(0.022, 8, 8);
-  for (let i = 0; i < 12; i++) {
+  for (let i = 0; i < 6; i++) {
     const cGroup = new THREE.Group();
     const wax = new THREE.Mesh(floatCandleGeo, candleMat);
     const flame = new THREE.Mesh(floatFlameGeo, flameMat);
@@ -1733,9 +1788,9 @@ export function createWizardClassroom(scene) {
     flame.scale.set(0.8, 1.6, 0.8);
     cGroup.add(wax, flame);
 
-    const cx = (i % 2 === 0 ? -1 : 1) * (1.2 + (i % 3) * 0.55);
-    const cy = 2.95 + (i % 4) * 0.28;
-    const cz = -2.5 + i * 0.45;
+    const cx = (i % 2 === 0 ? -1 : 1) * (2.08 + (i % 3) * 0.08);
+    const cy = 2.67 + (i % 3) * 0.20;
+    const cz = -2.7 + Math.floor(i / 2) * 2.7;
     cGroup.position.set(cx, cy, cz);
     cGroup.userData = { baseY: cy, phase: i * 0.7 };
     roomGroup.add(cGroup);
@@ -1743,27 +1798,29 @@ export function createWizardClassroom(scene) {
   }
 
   // Iluminação quente de velas do salão gótico
-  const ambientLight = new THREE.AmbientLight(0xffe2b0, 0.85);
+  const ambientLight = new THREE.HemisphereLight(0xffeed8, 0x584130, 0.88);
   roomGroup.add(ambientLight);
 
-  const mainCandleLight = new THREE.PointLight(0xffae42, 2.8, 12.0);
-  mainCandleLight.position.set(0, 3.65, 0);
+  const mainCandleLight = new THREE.PointLight(0xffc389, 16, 10);
+  mainCandleLight.position.set(0, 3.68, 0);
   roomGroup.add(mainCandleLight);
 
-  const backLight = new THREE.PointLight(0xffc86b, 2.2, 8.5);
-  backLight.position.set(0, 2.6, -2.4);
+  const backLight = new THREE.PointLight(0xffc18a, 11, 7.5);
+  backLight.position.set(0, 2.82, -3.06);
   roomGroup.add(backLight);
 
-  const frontLight = new THREE.PointLight(0xffc86b, 2.2, 8.5);
-  frontLight.position.set(0, 2.6, 2.4);
+  const frontLight = new THREE.PointLight(0xffd19f, 10, 7.5);
+  frontLight.position.set(0, 2.66, 2.75);
   roomGroup.add(frontLight);
 
   const setRoomBrightness = (factor) => {
     const f = THREE.MathUtils.clamp(factor, 0, 1);
     ambientLight.intensity = 0.88 * f;
-    mainCandleLight.intensity = 2.8 * f;
-    backLight.intensity = 2.2 * f;
-    frontLight.intensity = 2.2 * f;
+    mainCandleLight.intensity = 16 * f;
+    backLight.intensity = 11 * f;
+    frontLight.intensity = 10 * f;
+    wallGlowMat.opacity = 0.43 * f;
+    flameGlowMat.opacity = 0.61 * f;
     candles.forEach((c) => {
       c.visible = f > 0.05;
     });
