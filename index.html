@@ -101,6 +101,23 @@
       box-shadow: 0 0 8px #4ade80;
     }
 
+    #spell-reticle {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 16px;
+      height: 16px;
+      transform: translate(-50%, -50%);
+      border: 2px solid #fff;
+      border-radius: 50%;
+      box-shadow: 0 0 4px #000;
+    }
+
+    #spell-reticle.aiming {
+      border-color: var(--gold-bright);
+      box-shadow: 0 0 8px var(--gold);
+    }
+
     .controls-card {
       background: var(--dark-bg);
       border: 1px solid var(--panel-border);
@@ -248,6 +265,7 @@
   <div id="canvas-container"></div>
 
   <div id="hud">
+    <div id="spell-reticle" hidden aria-hidden="true"></div>
     <div class="top-bar">
       <div class="brand-card">
         <h1>⚡ Escola de Magia — Luigi &amp; Letícia</h1>
@@ -265,10 +283,10 @@
         <div><strong>No Meta Quest 3:</strong></div>
         <div>• <strong>Botão [A]</strong>: Iniciar / Pegar Varinha / Reiniciar</div>
         <div>• <strong>Andar Físico (4m×1,5m)</strong> ou <strong>Analógico</strong></div>
-        <div>• <strong>Magia</strong>: Aponte a varinha e levante a mão (ou segure A/Gatilho)</div>
+        <div>• <strong>Magia</strong>: Mire na pena, levante a varinha e abaixe-a voltando a mirar na pena</div>
         <hr style="border: 0; border-top: 1px solid rgba(245,208,97,0.2); margin: 6px 0;" />
         <div><strong>Simulador no Mac/PC:</strong></div>
-        <div>• <strong>W, A, S, D / Setas</strong>: Andar pela sala | <strong>Mouse</strong>: Olhar</div>
+        <div>• <strong>W, A, S, D / Setas</strong>: Andar | <strong>Arraste o mouse</strong> para olhar e mover a varinha</div>
         <div>• <strong>Tecla [A] ou [Espaço]</strong>: Botão A do Quest 3 | <strong>[P]</strong>: Pular Vídeo</div>
         <div>• <strong>Tecla [R]</strong>: Reiniciar para próximo convidado</div>
       </div>

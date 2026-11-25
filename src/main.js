@@ -1,10 +1,11 @@
 import * as THREE from 'three';
 import { createWizardClassroom, createWandMesh } from './classroom.js';
 import { createTrainCabin } from './trainCabin.js';
-import { createWizardCharacter } from './characters.js';
+import { createSpeechBubbleMesh, createWizardCharacter } from './characters.js';
 import { MagicAudioSystem } from './audio.js';
 import { FloorQrAnchorSystem } from './qrFloorAnchors.js';
 import { createLeatherGlove } from './leatherGlove.js';
+import { FeatherGesture } from './featherGesture.js';
 
 // Estados da Experiência
 const STATE = {
@@ -26,6 +27,7 @@ const qrFloorAnchor = new FloorQrAnchorSystem();
 
 // Elementos do HUD 2D (para tela do Mac/operador)
 const phaseLabelEl = document.getElementById('phase-label');
+const spellReticleEl = document.getElementById('spell-reticle');
 const qrStatusLabelEl = document.getElementById('qr-status-label');
 const welcomeModalEl = document.getElementById('welcome-modal');
 const modalTitleEl = document.getElementById('modal-title');
@@ -381,7 +383,25 @@ const spellBeamMat = new THREE.LineBasicMaterial({
   opacity: 0.0
 });
 const spellBeam = new THREE.Line(spellBeamGeo, spellBeamMat);
+spellBeam.visible = false;
+spellBeam.frustumCulled = false;
 scene.add(spellBeam);
+
+const featherGesture = new FeatherGesture();
+const featherAimTarget = new THREE.Sphere(new THREE.Vector3(), 0.16);
+const featherAimRay = new THREE.Ray();
+const featherPrompt = createSpeechBubbleMesh('Wingardium Leviosa', '');
+featherPrompt.mesh.position.copy(classroom.featherRestPos).add(new THREE.Vector3(0, 0.38, 0.16));
+featherPrompt.mesh.scale.setScalar(0.8);
+classroom.roomGroup.add(featherPrompt.mesh);
+
+const featherInstructions = {
+  aim: 'Mire na pena',
+  raise: 'Levante a varinha',
+  lower: 'Abaixe a varinha e volte a mirar na pena',
+  complete: 'Wingardium Leviosa!'
+};
+let featherInput = null;
 
 // Sistema de Partículas Mágicas Douradas (ao redor da varinha e da pena)
 const particleCount = 90;
@@ -416,11 +436,9 @@ function triggerControllerHaptics(intensity = 0.7, durationMs = 120) {
 // ============================================================================
 let currentState = STATE.WELCOME;
 let stateTimer = 0;
-let spellProgress = 0; // 0 a 1 para levantar a pena branca
 let hasWand = false;
 let prevButtonAPressed = false;
 let prevButtonBPressed = false;
-let lastWandWorldY = null;
 
 // Controle da Cadeira Central: desaparece 10s após o movimento do usuário na sala
 const CHAIR_DISAPPEAR_DELAY = 10.0;
@@ -477,6 +495,10 @@ function transitionToState(newState) {
 
   // Limpa linha guia de mira e destaque das varinhas ao trocar de estado
   wandAimLine.visible = false;
+  spellBeam.visible = false;
+  spellReticleEl.hidden = true;
+  featherPrompt.mesh.visible = false;
+  classroom.featherAura.material.opacity = 0.65;
   classroom.wandsOnTable.forEach((w) => {
     w.userData.isHovered = false;
   });
@@ -504,10 +526,9 @@ function transitionToState(newState) {
 
       // Reseta estado da sala, cadeira central, varinhas e pena
       hasWand = false;
-      spellProgress = 0;
-      handHolder.position.y = desktopHandRestY;
+      featherGesture.reset();
+      featherInput = null;
       playerWand.visible = false;
-      spellBeamMat.opacity = 0;
       magicParticles.visible = false;
       chairMoveDetected = false;
       chairDisappearTimer = 0;
@@ -668,18 +689,18 @@ function transitionToState(newState) {
     }
 
     case STATE.CAST_SPELL: {
-      phaseLabelEl.textContent = '8/8 • Faça o feitiço "Wingardium Leviosa" na Pena Branca!';
-      spellProgress = 0;
-      magicParticles.visible = true;
+      featherGesture.reset();
+      featherInput = null;
+      showFeatherInstruction();
+      magicParticles.visible = false;
       const msg =
-        'Oi! Olhe a grande pena branca na mesa da professora! Aponte sua varinha e levante a mão ou segure o botão A dizendo: Wingardium Leviosa!';
+        'Oi! Olhe a grande pena branca na mesa da professora! Aponte sua varinha, levante a mão e depois abaixe-a, voltando a mirar na pena.';
       speakCharacterDialogue('Luigi', msg, 'luigi_1');
       break;
     }
 
     case STATE.CELEBRATION: {
       phaseLabelEl.textContent = '✨ Concluído! Aperte [A] para o Próximo Convidado';
-      spellBeamMat.opacity = 0;
       audio.playWingardiumSuccess();
       triggerControllerHaptics(1.0, 400);
 
@@ -708,6 +729,8 @@ function skipCurrentIntroVideo() {
 // AÇÃO DO BOTÃO "A" (UNIVERSAL E FÁCIL PARA QUALQUER CRIANÇA OU CONVIDADO)
 // ============================================================================
 function handlePrimaryActionButtonA() {
+  if (currentState === STATE.CAST_SPELL) return;
+
   audio.init();
   primeDoorVideoOnGesture();
   triggerControllerHaptics(0.6, 80);
@@ -744,16 +767,6 @@ function handlePrimaryActionButtonA() {
       clampPlayerInsideClassroom();
     } else {
       transitionToState(STATE.CAST_SPELL);
-    }
-    return;
-  }
-
-  if (currentState === STATE.CAST_SPELL) {
-    // Impulsiona o feitiço facilmente ao apertar A
-    spellProgress = Math.min(1.0, spellProgress + 0.38);
-    audio.playSpellSpark(spellProgress);
-    if (spellProgress >= 1.0) {
-      transitionToState(STATE.CELEBRATION);
     }
     return;
   }
@@ -952,6 +965,62 @@ function getWandTipWorldPosition() {
   return tempVecB.clone();
 }
 
+function showFeatherInstruction() {
+  const step = featherGesture.step;
+  const immersive = renderer.xr.isPresenting;
+  const showAim = step !== 'complete';
+  const instruction = featherInstructions[step];
+  const hint = !immersive && step === 'aim' ? 'Arraste o mouse para mirar na pena' : instruction;
+  phaseLabelEl.textContent = `8/8 • ${hint}`;
+  spellReticleEl.hidden = immersive || !showAim;
+  featherPrompt.updateText(instruction, immersive && showAim);
+}
+
+function resetFeatherAim() {
+  if (currentState !== STATE.CAST_SPELL || featherGesture.step === 'complete') return;
+  featherGesture.reset();
+  showFeatherInstruction();
+}
+
+function updateFeatherGesture(dt, wandTipPos) {
+  const immersive = renderer.xr.isPresenting;
+  const candidate = immersive ? getActiveWandController() : camera;
+  const input = immersive && (!candidate.visible || !candidate.userData.isConnected) ? null : candidate;
+  if (input !== featherInput) {
+    featherInput = input;
+    resetFeatherAim();
+  }
+
+  let aiming = false;
+  if (input) {
+    classroom.featherGroup.getWorldPosition(featherAimTarget.center);
+    if (immersive) {
+      featherAimRay.origin.copy(playerWand.position);
+      featherAimRay.direction.set(0, 0, -1).applyQuaternion(playerWand.quaternion);
+    } else {
+      camera.getWorldPosition(featherAimRay.origin);
+      camera.getWorldDirection(featherAimRay.direction);
+    }
+
+    aiming = featherAimRay.intersectsSphere(featherAimTarget);
+    const previousStep = featherGesture.step;
+    const height = immersive ? wandTipPos.y - playerRig.position.y : camera.rotation.x;
+    const liftDistance = immersive ? 0.12 : 0.20; // Metros no Quest e radianos no desktop.
+    featherGesture.update(dt, aiming, height, liftDistance);
+
+    if (featherGesture.step !== previousStep) {
+      showFeatherInstruction();
+      if (featherGesture.step === 'raise' || featherGesture.step === 'lower') {
+        audio.playSpellSpark(featherGesture.step === 'raise' ? 0.3 : 0.65);
+        triggerControllerHaptics(0.35, 60);
+      }
+    }
+  }
+
+  spellReticleEl.classList.toggle('aiming', aiming);
+  classroom.featherAura.material.opacity = aiming ? 1.0 : 0.65;
+}
+
 function updateQrStatusBadge() {
   if (!qrStatusLabelEl) return;
   const count = qrFloorAnchor.getDetectedCount();
@@ -967,6 +1036,7 @@ function recenterChairPosition() {
     playerRig.position.set(0, 0, 0);
     playerRig.rotation.set(0, 0, 0);
   }
+  resetFeatherAim();
 }
 
 // ============================================================================
@@ -1001,7 +1071,7 @@ window.addEventListener('keyup', (e) => {
   keysPressed[e.code] = false;
 });
 
-// Olhar com o mouse no PC e levantar a varinha na fase do feitiço
+// No desktop, arrastar o mouse move o olhar e a varinha equipada.
 let isPointerDown = false;
 let lastMouseX = 0;
 let lastMouseY = 0;
@@ -1025,15 +1095,6 @@ window.addEventListener('pointermove', (e) => {
     camera.rotation.x = THREE.MathUtils.clamp(camera.rotation.x - dy * 0.004, -1.1, 1.1);
   }
 
-  // No modo PC, mover o mouse para cima na fase CAST_SPELL ergue a varinha e a pena!
-  if (currentState === STATE.CAST_SPELL && dy < -2) {
-    spellProgress = Math.min(1.0, spellProgress + Math.abs(dy) * 0.0045);
-    handHolder.position.y = desktopHandRestY + spellProgress * 0.14;
-    if (spellProgress >= 1.0) {
-      transitionToState(STATE.CELEBRATION);
-    }
-  }
-
   lastMouseX = e.clientX;
   lastMouseY = e.clientY;
 });
@@ -1053,7 +1114,7 @@ xrControllers.forEach((ctrl) => {
     handlePrimaryActionButtonA();
   });
   ctrl.addEventListener('squeezestart', () => {
-    if (currentState === STATE.SELECT_WAND || currentState === STATE.CAST_SPELL) {
+    if (currentState === STATE.SELECT_WAND) {
       handlePrimaryActionButtonA();
     }
   });
@@ -1109,11 +1170,10 @@ btnEnterVr.addEventListener('click', async () => {
 // ============================================================================
 function pollQuest3Gamepads(dt) {
   const session = renderer.xr.getSession();
-  if (!session) return { holdingAction: false };
+  if (!session) return;
 
   let buttonAPressedNow = false;
   let buttonBPressedNow = false;
-  let holdingTriggerOrA = false;
 
   for (const source of session.inputSources) {
     if (!source.gamepad) continue;
@@ -1124,16 +1184,11 @@ function pollQuest3Gamepads(dt) {
     // buttons[1] = Squeeze (Grip lateral)
     // buttons[4] = Botão A (mão direita) / Botão X (mão esquerda)
     // buttons[5] = Botão B (mão direita) / Botão Y (mão esquerda)
-    const triggerPressed = gp.buttons[0] && gp.buttons[0].pressed;
-    const gripPressed = gp.buttons[1] && gp.buttons[1].pressed;
     const btnA = gp.buttons[4] && gp.buttons[4].pressed;
     const btnB = gp.buttons[5] && gp.buttons[5].pressed;
 
     if (btnA) buttonAPressedNow = true;
     if (btnB) buttonBPressedNow = true;
-    if (btnA || triggerPressed || gripPressed) {
-      holdingTriggerOrA = true;
-    }
 
     // Locomoção Híbrida via Analógico (axes[2] = X, axes[3] = Y)
     if (
@@ -1173,8 +1228,6 @@ function pollQuest3Gamepads(dt) {
 
   prevButtonAPressed = buttonAPressedNow;
   prevButtonBPressed = buttonBPressedNow;
-
-  return { holdingAction: holdingTriggerOrA };
 }
 
 // Mantém o usuário estritamente dentro do Tapete Vermelho central (1,5m de largura x 4,0m de comprimento)
@@ -1269,11 +1322,12 @@ renderer.setAnimationLoop((timestamp, frame) => {
     qrFloorAnchor.updateFromXRFrame(frame, renderer, playerRig, elapsed, () => {
       classroom.setQrCornerStates(qrFloorAnchor.getDetectedCornerFlags());
       updateQrStatusBadge();
+      resetFeatherAim();
       triggerControllerHaptics(0.65, 110);
     });
   }
 
-  const { holdingAction } = pollQuest3Gamepads(dt);
+  pollQuest3Gamepads(dt);
   updateDesktopMovement(dt);
 
   // Nas fases dentro da Sala de Aula, restringe o andar apenas ao Tapete Vermelho central
@@ -1433,49 +1487,34 @@ renderer.setAnimationLoop((timestamp, frame) => {
     }
 
     case STATE.CAST_SPELL: {
-      // Detecta movimento de erguer a varinha no controle do Meta Quest 3 OU segurar botão A/Gatilho/Espaço
-      let liftDelta = 0;
-      if (lastWandWorldY !== null) {
-        const dy = wandTipPos.y - lastWandWorldY;
-        if (dy > 0.0015) {
-          liftDelta = dy * 2.2;
+      if (featherGesture.step !== 'complete') {
+        updateFeatherGesture(dt, wandTipPos);
+        if (featherPrompt.mesh.visible) featherPrompt.mesh.lookAt(playerPos);
+        if (featherGesture.step !== 'complete') {
+          break;
         }
-      }
-      lastWandWorldY = wandTipPos.y;
-
-      const isHoldingDesktop = keysPressed['Space'] || keysPressed['KeyA'];
-      if (holdingAction || isHoldingDesktop || liftDelta > 0) {
-        const gain = (holdingAction || isHoldingDesktop ? 0.55 * dt : 0) + liftDelta;
-        spellProgress = Math.min(1.0, spellProgress + gain);
-        if (Math.random() < 0.25) {
-          audio.playSpellSpark(spellProgress);
-          triggerControllerHaptics(0.35, 40);
-        }
+        spellBeam.visible = true;
+        magicParticles.visible = true;
+        audio.playSpellSpark(1.0);
       }
 
-      // Atualiza raio mágico entre a ponta da varinha e a grande pena branca
+      // A pena sai da mesa somente após a confirmação do gesto completo.
+      stateTimer += dt;
+      const rise = THREE.MathUtils.smoothstep(stateTimer, 0, 0.85);
       const featherPos = classroom.featherGroup.position;
+      featherPos.y = classroom.featherRestPos.y + rise * 0.95;
+      featherPos.x = classroom.featherRestPos.x + Math.sin(elapsed * 3.5) * 0.06 * rise;
+      classroom.featherGroup.rotation.z = Math.sin(elapsed * 4.0) * 0.15 * rise;
+      classroom.featherGroup.rotation.y = elapsed * 0.8 * rise;
+
       const beamPositions = spellBeam.geometry.attributes.position;
       beamPositions.setXYZ(0, wandTipPos.x, wandTipPos.y, wandTipPos.z);
       beamPositions.setXYZ(1, featherPos.x, featherPos.y, featherPos.z);
       beamPositions.needsUpdate = true;
-      spellBeamMat.opacity = 0.45 + 0.45 * Math.sin(elapsed * 8);
+      spellBeamMat.opacity = 0.6 + 0.3 * Math.sin(elapsed * 8);
+      updateMagicParticles(elapsed, featherPos, 0.32, rise);
 
-      // Levanta a grande pena branca suavemente conforme o feitiço avança!
-      const targetY = classroom.featherRestPos.y + spellProgress * 0.95;
-      classroom.featherGroup.position.y = THREE.MathUtils.lerp(
-        classroom.featherGroup.position.y,
-        targetY,
-        0.15
-      );
-      classroom.featherGroup.position.x =
-        classroom.featherRestPos.x + Math.sin(elapsed * 3.5) * 0.06 * spellProgress;
-      classroom.featherGroup.rotation.z = Math.sin(elapsed * 4.0) * 0.15 * spellProgress;
-      classroom.featherGroup.rotation.y = elapsed * 0.8 * spellProgress;
-
-      updateMagicParticles(elapsed, classroom.featherGroup.position, 0.32, spellProgress);
-
-      if (spellProgress >= 1.0) {
+      if (rise >= 1.0) {
         transitionToState(STATE.CELEBRATION);
       }
       break;
@@ -1485,7 +1524,7 @@ renderer.setAnimationLoop((timestamp, frame) => {
       stateTimer += dt;
       // Pena branca continua flutuando majestosamente no alto
       classroom.featherGroup.position.y =
-        classroom.featherRestPos.y + 0.98 + Math.sin(elapsed * 2.5) * 0.08;
+        classroom.featherRestPos.y + 0.95 + Math.sin(stateTimer * 2.5) * 0.08;
       classroom.featherGroup.rotation.y = elapsed * 1.1;
       updateMagicParticles(elapsed, classroom.featherGroup.position, 0.55, 1.0);
 
